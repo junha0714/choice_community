@@ -95,6 +95,88 @@ export function CommunityShell({ children }: { children: React.ReactNode }) {
 
   const activeCategory = searchParams.get("category");
 
+  const popularVoteCard = (
+    <SideCard title="인기글" subtitle="투표수 기준">
+      <ol className="space-y-3 text-sm">
+        {popular.length === 0 ? (
+          <li className="text-sm text-zinc-400 dark:text-[#AFC6D8]">아직 없어요</li>
+        ) : (
+          popular.map((post, i) => (
+            <li key={post.id}>
+              <Link
+                href={`/posts/${post.id}`}
+                className="group line-clamp-2 cursor-pointer text-zinc-700 transition-colors hover:text-sky-700 dark:text-[#AFC6D8] dark:hover:text-white"
+              >
+                <span className="mr-1.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-[11px] font-semibold text-zinc-500 group-hover:bg-sky-100 group-hover:text-sky-800 dark:bg-zinc-800 dark:text-sky-400 dark:group-hover:bg-sky-950 dark:group-hover:text-sky-200">
+                  {i + 1}
+                </span>
+                {post.title}
+              </Link>
+              <div className="mt-1 pl-7 text-[11px] text-zinc-400 dark:text-[#AFC6D8]">
+                {post.category} · {post.vote_count}표
+              </div>
+            </li>
+          ))
+        )}
+      </ol>
+    </SideCard>
+  );
+
+  const popularViewsCard = (
+    <SideCard title="인기글" subtitle="조회수 기준">
+      <ol className="space-y-3 text-sm">
+        {popularViews.length === 0 ? (
+          <li className="text-sm text-zinc-400 dark:text-[#AFC6D8]">아직 없어요</li>
+        ) : (
+          popularViews.map((post, i) => (
+            <li key={`v-${post.id}`}>
+              <Link
+                href={`/posts/${post.id}`}
+                className="group line-clamp-2 cursor-pointer text-zinc-700 transition-colors hover:text-sky-700 dark:text-[#AFC6D8] dark:hover:text-white"
+              >
+                <span className="mr-1.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-[11px] font-semibold text-zinc-500 group-hover:bg-sky-100 group-hover:text-sky-800 dark:bg-zinc-800 dark:text-sky-400 dark:group-hover:bg-sky-950 dark:group-hover:text-sky-200">
+                  {i + 1}
+                </span>
+                {post.title}
+              </Link>
+              <div className="mt-1 pl-7 text-[11px] text-zinc-400 dark:text-[#AFC6D8]">
+                {post.category} · 조회 {post.view_count}
+              </div>
+            </li>
+          ))
+        )}
+      </ol>
+    </SideCard>
+  );
+
+  const recentCommentsCard = (
+    <SideCard title="최근 댓글">
+      <ul className="space-y-4 text-sm">
+        {recent.length === 0 ? (
+          <li className="text-sm text-zinc-400 dark:text-[#AFC6D8]">아직 없어요</li>
+        ) : (
+          recent.map((c) => (
+            <li
+              key={c.id}
+              className="border-b border-zinc-100/90 pb-4 last:border-0 last:pb-0 dark:border-[#223141]"
+            >
+              <Link
+                href={`/posts/${c.post_id}`}
+                className="line-clamp-2 cursor-pointer text-zinc-700 transition-colors hover:text-sky-700 dark:text-[#AFC6D8] dark:hover:text-white"
+              >
+                {c.content}
+              </Link>
+              <div className="mt-1.5 text-[11px] leading-relaxed text-zinc-400 dark:text-[#AFC6D8]">
+                {c.post_title}
+                {c.author_nickname ? ` · ${c.author_nickname}` : ""}
+              </div>
+            </li>
+          ))
+        )}
+      </ul>
+    </SideCard>
+  );
+
   const categoryLinkClass = (cat: string | null) => {
     const isActive = (cat ?? null) === (activeCategory ?? null);
     return [
@@ -141,81 +223,9 @@ export function CommunityShell({ children }: { children: React.ReactNode }) {
 
         <aside className="hidden lg:block">
           <div className="sticky top-24 space-y-5">
-            <SideCard title="인기글" subtitle="투표수 기준">
-              <ol className="space-y-3 text-sm">
-                {popular.length === 0 ? (
-                  <li className="text-sm text-zinc-400 dark:text-[#AFC6D8]">아직 없어요</li>
-                ) : (
-                  popular.map((post, i) => (
-                    <li key={post.id}>
-                      <Link
-                        href={`/posts/${post.id}`}
-                        className="group line-clamp-2 cursor-pointer text-zinc-700 transition-colors hover:text-sky-700 dark:text-[#AFC6D8] dark:hover:text-white"
-                      >
-                        <span className="mr-1.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-[11px] font-semibold text-zinc-500 group-hover:bg-sky-100 group-hover:text-sky-800 dark:bg-zinc-800 dark:text-sky-400 dark:group-hover:bg-sky-950 dark:group-hover:text-sky-200">
-                          {i + 1}
-                        </span>
-                        {post.title}
-                      </Link>
-                      <div className="mt-1 pl-7 text-[11px] text-zinc-400 dark:text-[#AFC6D8]">
-                        {post.category} · {post.vote_count}표
-                      </div>
-                    </li>
-                  ))
-                )}
-              </ol>
-            </SideCard>
-
-            <SideCard title="인기글" subtitle="조회수 기준">
-              <ol className="space-y-3 text-sm">
-                {popularViews.length === 0 ? (
-                  <li className="text-sm text-zinc-400 dark:text-[#AFC6D8]">아직 없어요</li>
-                ) : (
-                  popularViews.map((post, i) => (
-                    <li key={`v-${post.id}`}>
-                      <Link
-                        href={`/posts/${post.id}`}
-                        className="group line-clamp-2 cursor-pointer text-zinc-700 transition-colors hover:text-sky-700 dark:text-[#AFC6D8] dark:hover:text-white"
-                      >
-                        <span className="mr-1.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-[11px] font-semibold text-zinc-500 group-hover:bg-sky-100 group-hover:text-sky-800 dark:bg-zinc-800 dark:text-sky-400 dark:group-hover:bg-sky-950 dark:group-hover:text-sky-200">
-                          {i + 1}
-                        </span>
-                        {post.title}
-                      </Link>
-                      <div className="mt-1 pl-7 text-[11px] text-zinc-400 dark:text-[#AFC6D8]">
-                        {post.category} · 조회 {post.view_count}
-                      </div>
-                    </li>
-                  ))
-                )}
-              </ol>
-            </SideCard>
-
-            <SideCard title="최근 댓글">
-              <ul className="space-y-4 text-sm">
-                {recent.length === 0 ? (
-                  <li className="text-sm text-zinc-400 dark:text-[#AFC6D8]">아직 없어요</li>
-                ) : (
-                  recent.map((c) => (
-                    <li
-                      key={c.id}
-                      className="border-b border-zinc-100/90 pb-4 last:border-0 last:pb-0 dark:border-[#223141]"
-                    >
-                      <Link
-                        href={`/posts/${c.post_id}`}
-                        className="line-clamp-2 cursor-pointer text-zinc-700 transition-colors hover:text-sky-700 dark:text-[#AFC6D8] dark:hover:text-white"
-                      >
-                        {c.content}
-                      </Link>
-                      <div className="mt-1.5 text-[11px] leading-relaxed text-zinc-400 dark:text-[#AFC6D8]">
-                        {c.post_title}
-                        {c.author_nickname ? ` · ${c.author_nickname}` : ""}
-                      </div>
-                    </li>
-                  ))
-                )}
-              </ul>
-            </SideCard>
+            {popularVoteCard}
+            {popularViewsCard}
+            {recentCommentsCard}
           </div>
         </aside>
       </div>
@@ -242,6 +252,12 @@ export function CommunityShell({ children }: { children: React.ReactNode }) {
             </Link>
           ))}
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:hidden sm:grid-cols-2">
+        {popularVoteCard}
+        {popularViewsCard}
+        <div className="sm:col-span-2">{recentCommentsCard}</div>
       </div>
     </div>
   );
