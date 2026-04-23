@@ -7,10 +7,11 @@ PostgreSQL 등에서 직접 하려면:
     UPDATE users SET is_admin = true WHERE email = 'you@example.com';
 """
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from database import SessionLocal  # noqa: E402
 from models import User  # noqa: E402

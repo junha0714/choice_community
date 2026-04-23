@@ -140,7 +140,7 @@ export default function AdminPage() {
   if (loading) {
     return (
       <main className="mx-auto w-full max-w-4xl p-4">
-        <p className="text-sm text-zinc-500">불러오는 중...</p>
+        <p className="text-sm text-zinc-500 dark:text-[#94a3b8]">불러오는 중...</p>
       </main>
     );
   }
@@ -148,8 +148,8 @@ export default function AdminPage() {
   if (error) {
     return (
       <main className="mx-auto w-full max-w-4xl p-4">
-        <p className="text-red-700">{error}</p>
-        <Link href="/" className="mt-4 inline-block text-sm text-zinc-600 hover:underline">
+        <p className="text-red-700 dark:text-red-200">{error}</p>
+        <Link href="/" className="mt-4 inline-block text-sm text-zinc-600 hover:underline dark:text-sky-300/80">
           홈으로
         </Link>
       </main>
@@ -159,25 +159,25 @@ export default function AdminPage() {
   return (
     <main className="mx-auto w-full max-w-4xl space-y-6 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold">관리자</h1>
-        <Link href="/" className="text-sm text-zinc-500 hover:underline">
+        <h1 className="text-2xl font-semibold text-zinc-900 dark:text-white">관리자</h1>
+        <Link href="/" className="text-sm text-zinc-600 hover:underline dark:text-sky-300/80">
           ← 홈
         </Link>
       </div>
 
-      <p className="text-sm text-zinc-500">
+      <p className="text-sm text-zinc-500 dark:text-[#94a3b8]">
         글 삭제는 해당 글 상세 페이지에서 작성자와 동일하게 &quot;삭제&quot; 버튼으로
         할 수 있어요.
       </p>
 
-      <div className="flex gap-2 border-b border-zinc-200 text-sm">
+      <div className="flex gap-2 border-b border-zinc-200 text-sm dark:border-[#223141]">
         <button
           type="button"
           onClick={() => setTab("reports")}
           className={`border-b-2 px-3 py-2 ${
             tab === "reports"
-              ? "border-indigo-600 font-medium text-indigo-800"
-              : "border-transparent text-zinc-500"
+              ? "border-indigo-600 font-medium text-indigo-800 dark:text-indigo-200"
+              : "border-transparent text-zinc-500 dark:text-[#94a3b8]"
           }`}
         >
           신고
@@ -187,8 +187,8 @@ export default function AdminPage() {
           onClick={() => setTab("users")}
           className={`border-b-2 px-3 py-2 ${
             tab === "users"
-              ? "border-indigo-600 font-medium text-indigo-800"
-              : "border-transparent text-zinc-500"
+              ? "border-indigo-600 font-medium text-indigo-800 dark:text-indigo-200"
+              : "border-transparent text-zinc-500 dark:text-[#94a3b8]"
           }`}
         >
           사용자
@@ -198,17 +198,17 @@ export default function AdminPage() {
       {tab === "reports" && reports && (
         <section className="space-y-3">
           {reports.items.length === 0 ? (
-            <p className="text-sm text-zinc-500">신고가 없습니다.</p>
+            <p className="text-sm text-zinc-500 dark:text-[#94a3b8]">신고가 없습니다.</p>
           ) : (
             reports.items.map((r) => (
               <div
                 key={r.id}
-                className="rounded-lg border border-zinc-200 p-4 text-sm"
+                className="rounded-lg border border-zinc-200 bg-white p-4 text-sm dark:border-[#223141] dark:bg-[#16202A]"
               >
-                <div className="font-medium">
+                <div className="font-medium text-zinc-900 dark:text-white">
                   #{r.id} · {r.target_type} #{r.target_id} · {r.status}
                 </div>
-                <p className="mt-2 whitespace-pre-wrap text-zinc-700">{r.reason}</p>
+                <p className="mt-2 whitespace-pre-wrap text-zinc-700 dark:text-[#cbd5e1]">{r.reason}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {r.status === "pending" ? (
                     <>
@@ -222,7 +222,7 @@ export default function AdminPage() {
                       <button
                         type="button"
                         onClick={() => void patchReport(r.id, "dismissed")}
-                        className="rounded border border-zinc-300 px-3 py-1 text-xs"
+                        className="rounded border border-zinc-300 bg-white px-3 py-1 text-xs text-zinc-800 dark:border-[#223141] dark:bg-[#0f1720] dark:text-sky-100"
                       >
                         기각
                       </button>
@@ -238,11 +238,11 @@ export default function AdminPage() {
                 type="button"
                 disabled={reportPage <= 1}
                 onClick={() => setReportPage((p) => Math.max(1, p - 1))}
-                className="rounded border px-3 py-1 text-sm disabled:opacity-40"
+                className="rounded border border-zinc-300 bg-white px-3 py-1 text-sm text-zinc-800 disabled:opacity-40 dark:border-[#223141] dark:bg-[#0f1720] dark:text-sky-100"
               >
                 이전
               </button>
-              <span className="text-sm text-zinc-600">
+              <span className="text-sm text-zinc-600 dark:text-[#cbd5e1]">
                 {reportPage} / {reports.total_pages}
               </span>
               <button
@@ -251,7 +251,7 @@ export default function AdminPage() {
                 onClick={() =>
                   setReportPage((p) => Math.min(reports.total_pages, p + 1))
                 }
-                className="rounded border px-3 py-1 text-sm disabled:opacity-40"
+                className="rounded border border-zinc-300 bg-white px-3 py-1 text-sm text-zinc-800 disabled:opacity-40 dark:border-[#223141] dark:bg-[#0f1720] dark:text-sky-100"
               >
                 다음
               </button>
@@ -264,7 +264,7 @@ export default function AdminPage() {
         <section className="space-y-2">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-zinc-500">
+              <tr className="border-b border-zinc-200 text-zinc-500 dark:border-[#223141] dark:text-[#94a3b8]">
                 <th className="py-2 pr-2">ID</th>
                 <th className="py-2 pr-2">이메일</th>
                 <th className="py-2 pr-2">닉네임</th>
@@ -274,16 +274,16 @@ export default function AdminPage() {
             </thead>
             <tbody>
               {users.items.map((u) => (
-                <tr key={u.id} className="border-b border-zinc-100">
+                <tr key={u.id} className="border-b border-zinc-100 dark:border-[#223141]">
                   <td className="py-2 pr-2">{u.id}</td>
                   <td className="py-2 pr-2">{u.email}</td>
                   <td className="py-2 pr-2">{u.nickname ?? "—"}</td>
                   <td className="py-2 pr-2">
                     {u.is_admin ? "관리자 " : ""}
                     {u.is_banned ? (
-                      <span className="text-red-600">제한</span>
+                      <span className="text-red-600 dark:text-red-200">제한</span>
                     ) : (
-                      <span className="text-zinc-400">정상</span>
+                      <span className="text-zinc-400 dark:text-[#94a3b8]">정상</span>
                     )}
                   </td>
                   <td className="py-2">
@@ -291,7 +291,7 @@ export default function AdminPage() {
                       <button
                         type="button"
                         onClick={() => void toggleBan(u.id, u.is_banned)}
-                        className="text-xs text-indigo-600 hover:underline"
+                        className="text-xs text-indigo-700 hover:underline dark:text-indigo-200"
                       >
                         {u.is_banned ? "제한 해제" : "이용 제한"}
                       </button>

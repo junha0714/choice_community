@@ -153,8 +153,8 @@ export default function MyPage() {
 
   if (loading) {
     return (
-      <main className="mx-auto w-full max-w-3xl">
-        <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
+      <main className="mx-auto w-full max-w-3xl text-zinc-900 dark:text-sky-100">
+        <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">
           불러오는 중...
         </div>
       </main>
@@ -163,12 +163,12 @@ export default function MyPage() {
 
   if (!user) {
     return (
-      <main className="mx-auto w-full max-w-3xl">
-        <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-          <p className="text-sm text-zinc-700">
+      <main className="mx-auto w-full max-w-3xl text-zinc-900 dark:text-sky-100">
+        <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">
+          <p className="text-sm text-zinc-700 dark:text-[#AFC6D8]">
             {error || "로그인이 필요합니다."}
           </p>
-          <Link href="/login" className="mt-3 inline-block text-indigo-600 hover:underline">
+          <Link href="/login" className="mt-3 inline-block text-sky-700 hover:underline dark:text-sky-300">
             로그인
           </Link>
         </div>
@@ -177,27 +177,27 @@ export default function MyPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-3xl space-y-6">
+    <main className="mx-auto w-full max-w-3xl space-y-6 text-zinc-900 dark:text-sky-100">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">마이페이지</h1>
-        <Link href="/" className="text-sm text-zinc-500 hover:underline">
+        <Link href="/" className="text-sm text-zinc-600 hover:underline dark:text-sky-300/85">
           ← 홈
         </Link>
       </div>
 
       {error && <p className="text-sm text-red-700">{error}</p>}
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-        <h2 className="text-base font-semibold">프로필</h2>
-        <p className="mt-3 text-sm text-zinc-800">
+      <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">
+        <h2 className="text-base font-semibold dark:text-white">프로필</h2>
+        <p className="mt-3 text-sm text-zinc-800 dark:text-[#AFC6D8]">
           <strong>이메일:</strong> {user.email}
         </p>
-        <p className="mt-1 text-sm text-zinc-500">
+        <p className="mt-1 text-sm text-zinc-600 dark:text-[#AFC6D8]/80">
           가입일: {new Date(user.created_at).toLocaleString("ko-KR")}
         </p>
 
         <form onSubmit={handleSaveNickname} className="mt-5 flex flex-col gap-3">
-          <label className="block text-sm font-medium text-zinc-700">
+          <label className="block text-sm font-medium text-zinc-800 dark:text-white">
             닉네임
             <input
               type="text"
@@ -205,14 +205,14 @@ export default function MyPage() {
               onChange={(e) => setNickname(e.target.value)}
               placeholder="닉네임 (비우면 표시 안 함)"
               maxLength={50}
-              className="mt-1 w-full max-w-md rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+              className="mt-1 w-full max-w-md rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
             />
           </label>
           <div>
             <button
               type="submit"
               disabled={saving}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-lg bg-sky-700 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-sky-900/20 hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-500 dark:hover:bg-sky-400"
             >
               {saving ? "저장 중..." : "닉네임 저장"}
             </button>
@@ -220,11 +220,11 @@ export default function MyPage() {
         </form>
       </section>
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-        <h2 className="text-base font-semibold">비밀번호 변경</h2>
-        <p className="mt-1 text-sm text-zinc-500">
+      <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">
+        <h2 className="text-base font-semibold dark:text-white">비밀번호 변경</h2>
+        <p className="mt-1 text-sm text-zinc-600 dark:text-[#AFC6D8]/85">
           로그인한 상태에서 현재 비밀번호를 알고 있을 때만 변경할 수 있어요.{" "}
-          <Link href="/forgot-password" className="text-indigo-600 hover:underline">
+          <Link href="/forgot-password" className="text-sky-700 hover:underline dark:text-sky-300">
             비밀번호를 잊었다면
           </Link>
         </p>
@@ -232,17 +232,17 @@ export default function MyPage() {
           onSubmit={handlePasswordChange}
           className="mt-4 flex max-w-md flex-col gap-3"
         >
-          <label className="block text-sm font-medium text-zinc-700">
+          <label className="block text-sm font-medium text-zinc-800 dark:text-white">
             현재 비밀번호
             <input
               type="password"
               value={currentPw}
               onChange={(e) => setCurrentPw(e.target.value)}
               autoComplete="current-password"
-              className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
             />
           </label>
-          <label className="block text-sm font-medium text-zinc-700">
+          <label className="block text-sm font-medium text-zinc-800 dark:text-white">
             새 비밀번호 (8자 이상)
             <input
               type="password"
@@ -250,7 +250,7 @@ export default function MyPage() {
               onChange={(e) => setNewPw(e.target.value)}
               autoComplete="new-password"
               minLength={8}
-              className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
             />
           </label>
           {pwMsg && (
@@ -267,7 +267,7 @@ export default function MyPage() {
           <button
             type="submit"
             disabled={pwSaving}
-            className="w-fit rounded-lg bg-zinc-800 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-900 disabled:opacity-60"
+            className="w-fit rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-sky-500 dark:text-white dark:hover:bg-sky-400"
           >
             {pwSaving ? "변경 중..." : "비밀번호 변경"}
           </button>
@@ -289,31 +289,31 @@ export default function MyPage() {
         </section>
       ) : null}
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-        <h2 className="text-base font-semibold">내가 쓴 고민 글</h2>
+      <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">
+        <h2 className="text-base font-semibold dark:text-white">내가 쓴 고민 글</h2>
         {posts.length === 0 ? (
-          <p className="mt-3 text-sm text-zinc-500">아직 작성한 글이 없어요.</p>
+          <p className="mt-3 text-sm text-zinc-600 dark:text-[#AFC6D8]/85">아직 작성한 글이 없어요.</p>
         ) : (
           <div className="mt-4 space-y-3">
             {posts.map((post) => (
               <Link
                 key={post.id}
                 href={`/posts/${post.id}`}
-                className="block rounded-lg border border-zinc-200 px-4 py-3 hover:bg-zinc-50"
+                className="block rounded-lg border border-zinc-200 bg-white px-4 py-3 transition hover:bg-zinc-50 dark:border-[#223141] dark:bg-[#1B2733] dark:hover:bg-sky-950/35"
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">{post.title}</span>
+                  <span className="font-semibold text-zinc-900 dark:text-white">{post.title}</span>
                   {(post.post_kind ?? "community") === "ai" ? (
-                    <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] text-indigo-800">
+                    <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] text-sky-900 dark:bg-[#2b1f4a] dark:text-white">
                       AI
                     </span>
                   ) : (
-                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-800">
+                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-800 dark:bg-[#16283a] dark:text-[#4A90E2]">
                       투표
                     </span>
                   )}
                 </div>
-                <div className="mt-1 text-sm text-zinc-600">
+                <div className="mt-1 text-sm text-zinc-700 dark:text-[#AFC6D8]">
                   {post.category} · {post.options}
                 </div>
               </Link>

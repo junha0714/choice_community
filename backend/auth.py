@@ -6,10 +6,14 @@ bcrypt 공식 패키지로 직접 해시합니다.
 from datetime import datetime, timedelta, timezone
 
 import os
+from pathlib import Path
+
 import bcrypt
 from jose import JWTError, jwt
 from dotenv import load_dotenv
 
+_BACKEND_DIR = Path(__file__).resolve().parent
+load_dotenv(_BACKEND_DIR / ".env")
 load_dotenv()
 
 SECRET_KEY = os.getenv("JWT_SECRET", "").strip()

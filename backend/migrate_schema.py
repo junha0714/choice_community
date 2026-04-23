@@ -53,3 +53,27 @@ def run_schema_migrations() -> None:
         "ALTER TABLE comments ADD COLUMN deleted_at TIMESTAMPTZ",
         "ALTER TABLE comments ADD COLUMN deleted_at DATETIME",
     )
+    _add_column_if_missing(
+        "posts",
+        "tags",
+        "ALTER TABLE posts ADD COLUMN tags TEXT",
+        "ALTER TABLE posts ADD COLUMN tags TEXT",
+    )
+    _add_column_if_missing(
+        "comments",
+        "parent_id",
+        "ALTER TABLE comments ADD COLUMN parent_id INTEGER REFERENCES comments(id)",
+        "ALTER TABLE comments ADD COLUMN parent_id INTEGER REFERENCES comments(id)",
+    )
+    _add_column_if_missing(
+        "posts",
+        "vote_deadline_at",
+        "ALTER TABLE posts ADD COLUMN vote_deadline_at TIMESTAMPTZ",
+        "ALTER TABLE posts ADD COLUMN vote_deadline_at DATETIME",
+    )
+    _add_column_if_missing(
+        "posts",
+        "ai_transcript_public",
+        "ALTER TABLE posts ADD COLUMN ai_transcript_public BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE posts ADD COLUMN ai_transcript_public INTEGER NOT NULL DEFAULT 0",
+    )

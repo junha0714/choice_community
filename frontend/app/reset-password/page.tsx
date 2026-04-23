@@ -51,26 +51,28 @@ function ResetForm() {
 
   return (
     <main className="mx-auto w-full max-w-md">
-      <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-        <h1 className="text-xl font-semibold tracking-tight">비밀번호 재설정</h1>
-        <p className="mt-2 text-sm text-zinc-600">
+      <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">
+        <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
+          비밀번호 재설정
+        </h1>
+        <p className="mt-2 text-sm text-zinc-600 dark:text-[#AFC6D8]">
           이메일로 받은 토큰(또는 개발 모드에서 표시된 토큰)과 새 비밀번호를
           입력하세요.
         </p>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-          <label className="block text-sm font-medium text-zinc-700">
+          <label className="block text-sm font-medium text-zinc-700 dark:text-[#AFC6D8]">
             재설정 토큰
             <input
               type="text"
               value={token}
               onChange={(e) => setToken(e.target.value)}
               required
-              className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 font-mono text-sm"
+              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 font-mono text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30"
               autoComplete="off"
             />
           </label>
-          <label className="block text-sm font-medium text-zinc-700">
+          <label className="block text-sm font-medium text-zinc-700 dark:text-[#AFC6D8]">
             새 비밀번호
             <input
               type="password"
@@ -78,11 +80,11 @@ function ResetForm() {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={8}
-              className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30"
               autoComplete="new-password"
             />
           </label>
-          <label className="block text-sm font-medium text-zinc-700">
+          <label className="block text-sm font-medium text-zinc-700 dark:text-[#AFC6D8]">
             새 비밀번호 확인
             <input
               type="password"
@@ -90,22 +92,22 @@ function ResetForm() {
               onChange={(e) => setPassword2(e.target.value)}
               required
               minLength={8}
-              className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm"
+              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30"
               autoComplete="new-password"
             />
           </label>
-          {error && <p className="text-sm text-red-700">{error}</p>}
+          {error && <p className="text-sm text-red-700 dark:text-red-200">{error}</p>}
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+            className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-indigo-500/90"
           >
             {loading ? "처리 중..." : "비밀번호 변경"}
           </button>
         </form>
 
-        <p className="mt-6 text-sm">
-          <Link href="/login" className="text-indigo-600 hover:underline">
+        <p className="mt-6 text-sm text-zinc-600 dark:text-[#AFC6D8]">
+          <Link href="/login" className="text-indigo-700 hover:underline dark:text-indigo-200">
             로그인
           </Link>
         </p>
@@ -119,7 +121,9 @@ export default function ResetPasswordPage() {
     <Suspense
       fallback={
         <main className="mx-auto w-full max-w-md">
-          <p className="text-sm text-zinc-500">불러오는 중...</p>
+          <p className="text-sm text-zinc-500 dark:text-[#AFC6D8]/80">
+            불러오는 중...
+          </p>
         </main>
       }
     >

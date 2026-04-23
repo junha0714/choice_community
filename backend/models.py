@@ -1,4 +1,13 @@
-from sqlalchemy import Boolean, Column, Integer, String, Text, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.sql import func
 from database import Base
 
@@ -30,12 +39,18 @@ class Post(Base):
     ai_mode = Column(String(20), nullable=True)
     view_count = Column(Integer, nullable=False, server_default="0", default=0)
     like_count = Column(Integer, nullable=False, server_default="0", default=0)
-    # AI 최종 결과 (타인에게는 이 필드만 공개)
+    # AI 최종 결과
     ai_recommended = Column(Text, nullable=True)
     ai_reason = Column(Text, nullable=True)
+    # True면 질문·답변 과정(ai_interactions)을 완료 후 다른 사용자에게도 공개
+    ai_transcript_public = Column(Boolean, nullable=False, server_default="false", default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     is_hidden = Column(Boolean, nullable=False, server_default="false", default=False)
+    # 쉼표로 구분된 태그 (소문자 정규화), 예: "고민,연애"
+    tags = Column(Text, nullable=True)
+    # 투표 마감 시각 (NULL이면 마감 없음)
+    vote_deadline_at = Column(DateTime(timezone=True), nullable=True)
 
 class Comment(Base):
     __tablename__ = "comments"
@@ -45,6 +60,7 @@ class Comment(Base):
 
     post_id = Column(Integer, ForeignKey("posts.id"))
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    parent_id = Column(Integer, ForeignKey("comments.id"), nullable=True, index=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     deleted_at = Column(DateTime(timezone=True), nullable=True)
@@ -92,6 +108,21 @@ class UserBlock(Base):
     id = Column(Integer, primary_key=True, index=True)
     blocker_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     blocked_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    kind = Column(String(40), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    body = Column(Text, nullable=False)
+    post_id = Column(Integer, ForeignKey("posts.id"), nullable=True, index=True)
+    comment_id = Column(Integer, ForeignKey("comments.id"), nullable=True)
+    report_id = Column(Integer, ForeignKey("reports.id"), nullable=True)
+    read_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

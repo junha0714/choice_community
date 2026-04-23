@@ -38,6 +38,19 @@ class UserProfileUpdate(BaseModel):
     nickname: str = Field(default="", max_length=50)
 
 
+def _normalize_tag_list(v: List[str] | None) -> List[str]:
+    if not v:
+        return []
+    seen: set[str] = set()
+    out: List[str] = []
+    for x in v:
+        s = (x or "").strip().lower()[:30]
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out[:10]
+
+
 class PostCreate(BaseModel):
     title: str
     content: str
@@ -45,6 +58,16 @@ class PostCreate(BaseModel):
     options: List[str]
     post_kind: Literal["community", "ai"] = "community"
     ai_mode: Literal["simple", "detailed"] | None = None
+    tags: List[str] | None = None
+    vote_deadline_at: datetime | None = Field(
+        default=None,
+        description="투표 마감 시각(없으면 마감 없음)",
+    )
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def validate_tags(cls, v):
+        return _normalize_tag_list(v if isinstance(v, list) else None)
 
     @field_validator("category")
     @classmethod
@@ -71,6 +94,16 @@ class PostUpdate(BaseModel):
     content: str | None = None
     category: str | None = None
     options: List[str] | None = None
+    tags: List[str] | None = None
+    vote_deadline_at: datetime | None = None
+    ai_transcript_public: bool | None = None
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def validate_tags(cls, v):
+        if v is None:
+            return None
+        return _normalize_tag_list(v if isinstance(v, list) else None)
 
     @field_validator("category")
     @classmethod
@@ -110,10 +143,14 @@ class PostResponse(BaseModel):
     liked_by_me: bool | None = None
     ai_recommended: str | None = None
     ai_reason: str | None = None
+    # AI 글: 질문·답변 로그를 방문자에게 공개할지 (완료 후에만 적용)
+    ai_transcript_public: bool = False
     user_id: int | None = None
     author_nickname: str | None = None
     created_at: datetime
     is_hidden: bool = False
+    tags: List[str] = []
+    vote_deadline_at: datetime | None = None
 
     class Config:
         from_attributes = True
@@ -127,12 +164,27 @@ class PaginatedPosts(BaseModel):
     total_pages: int
 
 
+class SimilarPostBrief(BaseModel):
+    id: int
+    title: str
+    category: str
+    post_kind: str = "community"
+    view_count: int = 0
+    like_count: int = 0
+    created_at: datetime
+    tags: List[str] = []
+
+    class Config:
+        from_attributes = True
+
+
 class LikeToggleResponse(BaseModel):
     liked: bool
     like_count: int
 
 class CommentCreate(BaseModel):
     content: str
+    parent_id: int | None = None
 
 
 class CommentUpdate(BaseModel):
@@ -145,10 +197,39 @@ class CommentResponse(BaseModel):
     post_id: int
     user_id: int | None = None
     author_nickname: str | None = None
+    parent_id: int | None = None
+    reply_count: int = 0
     created_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class NotificationResponse(BaseModel):
+    id: int
+    kind: str
+    title: str
+    body: str
+    post_id: int | None = None
+    comment_id: int | None = None
+    report_id: int | None = None
+    read_at: datetime | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PaginatedNotifications(BaseModel):
+    items: List[NotificationResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class NotificationUnreadCount(BaseModel):
+    count: int
 
 class VoteCreate(BaseModel):
     selected_option: str
@@ -169,12 +250,22 @@ class VoteCountResponse(BaseModel):
     count: int
 
 
+class AITranscriptItem(BaseModel):
+    step: int
+    question: str
+    answer: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
 class AIQuestionFlowResponse(BaseModel):
     type: str
     step: int | None = None
     question: str | None = None
     recommended: str | None = None
     reason: str | None = None
+    transcript: List[AITranscriptItem] | None = None
 
 
 class AIAnswerRequest(BaseModel):
@@ -276,6 +367,23 @@ class ForgotPasswordResponse(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+
+
+# --- 태그 추천 ---
+class TagSuggestRequest(BaseModel):
+    title: str = ""
+    content: str = ""
+    category: str | None = None
+    selected: List[str] | None = None
+
+    @field_validator("selected", mode="before")
+    @classmethod
+    def validate_selected(cls, v):
+        return _normalize_tag_list(v if isinstance(v, list) else None)
+
+
+class TagSuggestResponse(BaseModel):
+    tags: List[str] = []
 
 
 class AdminUserBrief(BaseModel):
