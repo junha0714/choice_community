@@ -327,15 +327,15 @@ function HomeInner() {
               <li key={post.id}>
                 <Link
                   href={`/posts/${post.id}`}
-                  className="group relative flex cursor-pointer flex-row items-start gap-3 rounded-2xl border border-sky-300/60 bg-white py-3.5 pl-4 pr-4 shadow-[0_8px_22px_-18px_rgba(2,132,199,0.18)] transition duration-200 hover:-translate-y-0.5 hover:border-sky-400 hover:shadow-[0_18px_56px_-26px_rgba(14,165,233,0.32)] focus-visible:-translate-y-0.5 focus-visible:border-sky-500 focus-visible:shadow-[0_18px_56px_-26px_rgba(14,165,233,0.32)] dark:border-sky-800/45 dark:bg-none dark:bg-[#16202A] dark:hover:border-sky-500/85 dark:hover:shadow-[0_18px_56px_-28px_rgba(56,189,248,0.22)] dark:focus-visible:border-sky-500/90 dark:focus-visible:shadow-[0_18px_56px_-28px_rgba(56,189,248,0.22)] sm:gap-4"
+                  className="group relative flex cursor-pointer flex-row items-start gap-2 rounded-xl border border-sky-200/70 bg-white px-3 py-2.5 shadow-[0_8px_22px_-18px_rgba(2,132,199,0.18)] transition duration-200 hover:-translate-y-0.5 hover:border-sky-400 hover:shadow-[0_18px_56px_-26px_rgba(14,165,233,0.32)] focus-visible:-translate-y-0.5 focus-visible:border-sky-500 focus-visible:shadow-[0_18px_56px_-26px_rgba(14,165,233,0.32)] dark:border-sky-800/45 dark:bg-none dark:bg-[#16202A] dark:hover:border-sky-500/85 dark:hover:shadow-[0_18px_56px_-28px_rgba(56,189,248,0.22)] dark:focus-visible:border-sky-500/90 dark:focus-visible:shadow-[0_18px_56px_-28px_rgba(56,189,248,0.22)] sm:gap-4 sm:rounded-2xl sm:border-sky-300/60 sm:px-0 sm:py-3.5 sm:pl-4 sm:pr-4"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-semibold leading-snug text-zinc-950 transition group-hover:text-sky-900 dark:text-white dark:group-hover:text-white">
+                      <span className="line-clamp-2 text-sm font-semibold leading-snug text-zinc-950 transition group-hover:text-sky-900 dark:text-white dark:group-hover:text-white sm:line-clamp-none sm:text-base">
                         {post.title}
                       </span>
                       {(post.tags ?? []).length > 0 ? (
-                        <span className="flex flex-wrap gap-1.5">
+                        <span className="hidden flex-wrap gap-1.5 sm:flex">
                           {(post.tags ?? []).map((t) => (
                             <span
                               key={t}
@@ -347,20 +347,29 @@ function HomeInner() {
                         </span>
                       ) : null}
                       {(post.post_kind ?? "community") === "ai" ? (
-                        <span className="shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-900 ring-1 ring-inset ring-sky-200/90 dark:bg-[#2b1f4a] dark:text-white dark:ring-[#9B5DE5]/40">
+                        <span className="shrink-0 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-900 ring-1 ring-inset ring-sky-200/90 dark:bg-[#2b1f4a] dark:text-white dark:ring-[#9B5DE5]/40 sm:px-2 sm:text-[11px]">
                           AI
                         </span>
                       ) : (
-                        <span className="shrink-0 rounded-full bg-emerald-100/90 px-2 py-0.5 text-[11px] font-semibold text-emerald-900/90 ring-1 ring-inset ring-emerald-200/70 dark:bg-[#16283a] dark:text-[#4A90E2] dark:ring-[#4A90E2]/35">
+                        <span className="shrink-0 rounded-full bg-emerald-100/90 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-900/90 ring-1 ring-inset ring-emerald-200/70 dark:bg-[#16283a] dark:text-[#4A90E2] dark:ring-[#4A90E2]/35 sm:px-2 sm:text-[11px]">
                           투표
                         </span>
                       )}
                     </div>
-                    <p className="mt-1.5 line-clamp-2 text-sm leading-snug text-zinc-700 dark:text-[#B0C4D4]">
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-snug text-zinc-500 dark:text-[#AFC6D8] sm:hidden">
+                      <span className="font-medium text-zinc-700 dark:text-[#cbd5e1]">
+                        {post.category}
+                      </span>
+                      <span className="text-zinc-400 dark:text-[#7f93a8]">·</span>
+                      <span>조회 {post.view_count ?? 0}</span>
+                      <span className="text-zinc-400 dark:text-[#7f93a8]">·</span>
+                      <span>♥ {post.like_count ?? 0}</span>
+                    </div>
+                    <p className="mt-1.5 hidden line-clamp-2 text-sm leading-snug text-zinc-700 dark:text-[#B0C4D4] sm:block">
                       {post.content}
                     </p>
                   </div>
-                  <div className="w-[42%] max-w-[min(240px,42vw)] shrink-0 space-y-1.5 self-stretch border-l border-sky-100/80 pl-3.5 text-right text-[11px] leading-snug text-sky-900/80 dark:border-[#223141]/90 dark:text-[#AFC6D8] sm:w-[38%] sm:max-w-[260px] sm:pl-4 sm:text-xs">
+                  <div className="hidden w-[42%] max-w-[min(240px,42vw)] shrink-0 space-y-1.5 self-stretch border-l border-sky-100/80 pl-3.5 text-right text-[11px] leading-snug text-sky-900/80 dark:border-[#223141]/90 dark:text-[#AFC6D8] sm:block sm:w-[38%] sm:max-w-[260px] sm:pl-4 sm:text-xs">
                     <div className="text-sky-950/90 dark:text-white">
                       <span className="text-sky-500/90 dark:text-[#6AA6D8]">카테고리</span>{" "}
                       <span className="font-medium text-sky-950 dark:text-white">
