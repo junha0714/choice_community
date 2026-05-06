@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { API_BASE_URL } from "@/lib/config";
 import { getStoredToken } from "@/lib/auth-storage";
+import { fetchWithTimeout, isAbortError } from "@/lib/fetch-with-timeout";
 
 type Post = {
   id: number;
@@ -85,7 +86,11 @@ function HomeInner() {
     const token = getStoredToken();
     const headers: HeadersInit = {};
     if (token) headers.Authorization = `Bearer ${token}`;
-    const res = await fetch(`${API_BASE_URL}/posts?${qs}`, { headers, signal });
+    const res = await fetchWithTimeout(`${API_BASE_URL}/posts?${qs}`, {
+      headers,
+      signal,
+      timeoutMs: 15000,
+    });
     if (!res.ok) {
       // 배포 환경에서는 종종 HTML 에러 페이지가 내려오므로 본문을 그대로 노출하지 않습니다.
       let detail = "";
@@ -128,7 +133,11 @@ function HomeInner() {
         await fetchPosts(controller.signal);
       } catch (e) {
         if (controller.signal.aborted) return;
-        setError(e instanceof Error ? e.message : "불러오기에 실패했어요.");
+        if (isAbortError(e)) {
+          setError("서버 응답이 지연되고 있어요. 잠시 후 다시 시도해 주세요.");
+        } else {
+          setError(e instanceof Error ? e.message : "불러오기에 실패했어요.");
+        }
         setData(null);
       } finally {
         if (!controller.signal.aborted) setIsLoading(false);
