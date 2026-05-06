@@ -83,9 +83,13 @@ function HomeInner() {
     params.set("page", String(page));
     params.set("page_size", "20");
     const qs = params.toString();
-    const token = getStoredToken();
     const headers: HeadersInit = {};
-    if (token) headers.Authorization = `Bearer ${token}`;
+    // 크로스 오리진에서 Authorization은 CORS preflight를 유발할 수 있어 홈(공개 목록)은
+    // 같은 오리진(/api 프록시)일 때만 토큰을 붙입니다.
+    if (API_BASE_URL.startsWith("/")) {
+      const token = getStoredToken();
+      if (token) headers.Authorization = `Bearer ${token}`;
+    }
     const timeoutMs = process.env.NODE_ENV === "production" ? 45000 : 15000;
     const res = await fetchWithTimeout(`${API_BASE_URL}/posts?${qs}`, {
       headers,
@@ -135,7 +139,16 @@ function HomeInner() {
       } catch (e) {
         if (controller.signal.aborted) return;
         if (isAbortError(e)) {
-          setError("서버 응답이 지연되고 있어요. 잠시 후 다시 시도해 주세요.");
+          setError(
+            "서버 응답이 지연되고 있어요. (타임아웃)\n잠시 후 다시 시도해 주세요.",
+          );
+        } else if (
+          e instanceof TypeError &&
+          /failed to fetch/i.test(e.message || "")
+        ) {
+          setError(
+            "서버에 연결할 수 없어요. (Failed to fetch)\n- 백엔드가 중지/슬립 상태이거나\n- CORS가 배포 도메인을 허용하지 않거나\n- API 주소가 잘못 설정됐을 수 있어요.",
+          );
         } else {
           setError(e instanceof Error ? e.message : "불러오기에 실패했어요.");
         }
