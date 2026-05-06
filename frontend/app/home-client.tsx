@@ -56,10 +56,13 @@ function HomeInner() {
     : "likes";
 
   const [data, setData] = useState<PaginatedPosts | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [searchDraft, setSearchDraft] = useState("");
   const [tagDraft, setTagDraft] = useState("");
 
-  const fetchPosts = async () => {
+  const fetchPosts = async (signal?: AbortSignal) => {
     const params = new URLSearchParams();
     if (category) params.set("category", category);
     if (searchQ) params.set("q", searchQ);
@@ -71,9 +74,23 @@ function HomeInner() {
     const token = getStoredToken();
     const headers: HeadersInit = {};
     if (token) headers.Authorization = `Bearer ${token}`;
-    const res = await fetch(`${API_BASE_URL}/posts?${qs}`, { headers });
-    const json = await res.json();
-    setData(json as PaginatedPosts);
+    const res = await fetch(`${API_BASE_URL}/posts?${qs}`, { headers, signal });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(
+        `게시글 목록을 불러오지 못했어요. (${res.status})${body ? `\n${body}` : ""}`,
+      );
+    }
+    const json = (await res.json()) as unknown;
+    const parsed =
+      typeof json === "object" &&
+      json != null &&
+      "items" in json &&
+      Array.isArray((json as any).items)
+        ? (json as PaginatedPosts)
+        : null;
+    if (!parsed) throw new Error("응답 형식이 올바르지 않아요. 잠시 후 다시 시도해 주세요.");
+    setData(parsed);
   };
 
   useEffect(() => {
@@ -82,8 +99,30 @@ function HomeInner() {
   }, [searchParams]);
 
   useEffect(() => {
-    void fetchPosts();
-  }, [category, searchQ, page, sort, tagParam]);
+    const controller = new AbortController();
+    setIsLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        await fetchPosts(controller.signal);
+      } catch (e) {
+        if (controller.signal.aborted) return;
+        setError(e instanceof Error ? e.message : "불러오기에 실패했어요.");
+        setData(null);
+      } finally {
+        if (!controller.signal.aborted) setIsLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [category, searchQ, page, sort, tagParam, reloadKey]);
+
+  useEffect(() => {
+    if (!data || data.total_pages <= 1) return;
+    const next = page + 1;
+    const prev = page - 1;
+    if (next <= data.total_pages) router.prefetch(buildPageHref(next));
+    if (prev >= 1) router.prefetch(buildPageHref(prev));
+  }, [data, page, router]);
 
   const buildListParams = (overrides?: {
     page?: number;
@@ -297,7 +336,33 @@ function HomeInner() {
           )}
         </div>
 
-        {posts.length === 0 ? (
+        {error ? (
+          <div
+            className="rounded-2xl border border-rose-200/70 bg-rose-50/60 px-4 py-10 text-center dark:border-rose-900/60 dark:bg-rose-950/25"
+            role="alert"
+          >
+            <p className="text-sm text-rose-950/90 dark:text-rose-100/90 whitespace-pre-wrap">
+              {error}
+            </p>
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setReloadKey((v) => v + 1);
+                }}
+                className="inline-flex items-center justify-center rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-rose-900/20 transition hover:bg-rose-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/50 focus-visible:ring-offset-2 dark:bg-rose-500 dark:hover:bg-rose-400"
+              >
+                다시 시도
+              </button>
+              <Link
+                href="/"
+                className="inline-flex items-center justify-center rounded-xl border border-rose-300/70 bg-white/90 px-4 py-2 text-sm font-medium text-rose-950 shadow-sm transition hover:bg-rose-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-300/60 focus-visible:ring-offset-2 dark:border-rose-900/60 dark:bg-zinc-900/70 dark:text-rose-100 dark:hover:bg-rose-950/40"
+              >
+                홈으로
+              </Link>
+            </div>
+          </div>
+        ) : posts.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-sky-300/65 bg-sky-50/55 px-4 py-10 text-center dark:border-sky-700/55 dark:bg-sky-950/35">
             <p className="text-sm text-sky-950/85 dark:text-sky-100/90">
               {searchQ || category || tagParam
@@ -422,6 +487,12 @@ function HomeInner() {
               다음
             </Link>
           </nav>
+        )}
+
+        {isLoading && (
+          <p className="text-center text-xs text-sky-600/80 dark:text-sky-400/80" aria-live="polite">
+            불러오는 중…
+          </p>
         )}
       </section>
     </div>
