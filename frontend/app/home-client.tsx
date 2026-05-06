@@ -90,7 +90,7 @@ function HomeInner() {
       const token = getStoredToken();
       if (token) headers.Authorization = `Bearer ${token}`;
     }
-    const timeoutMs = process.env.NODE_ENV === "production" ? 45000 : 15000;
+    const timeoutMs = process.env.NODE_ENV === "production" ? 120000 : 15000;
     const res = await fetchWithTimeout(`${API_BASE_URL}/posts?${qs}`, {
       headers,
       signal,
