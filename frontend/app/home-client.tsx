@@ -86,10 +86,11 @@ function HomeInner() {
     const token = getStoredToken();
     const headers: HeadersInit = {};
     if (token) headers.Authorization = `Bearer ${token}`;
+    const timeoutMs = process.env.NODE_ENV === "production" ? 45000 : 15000;
     const res = await fetchWithTimeout(`${API_BASE_URL}/posts?${qs}`, {
       headers,
       signal,
-      timeoutMs: 15000,
+      timeoutMs,
     });
     if (!res.ok) {
       // 배포 환경에서는 종종 HTML 에러 페이지가 내려오므로 본문을 그대로 노출하지 않습니다.
