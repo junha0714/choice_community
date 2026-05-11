@@ -102,7 +102,7 @@ SAMPLES: list[dict] = [
         "options": ["이직 준비", "휴식/휴직", "현 직장 유지"],
         "tags": "ai,번아웃",
         "post_kind": "ai",
-        "ai_mode": "simple",
+        "ai_mode": "quick",
     },
     {
         "title": "[AI] 연애 3년 차, 다음 단계 고민",
@@ -111,7 +111,7 @@ SAMPLES: list[dict] = [
         "options": ["결혼 준비", "동거", "지금 관계 유지"],
         "tags": "ai,연애",
         "post_kind": "ai",
-        "ai_mode": "detailed",
+        "ai_mode": "deep",
     },
     {
         "title": "[AI] 이사 vs 리모델링",
@@ -120,7 +120,7 @@ SAMPLES: list[dict] = [
         "options": ["이사", "부분 리모델링", "1~2년 더 유지"],
         "tags": "ai,집",
         "post_kind": "ai",
-        "ai_mode": "simple",
+        "ai_mode": "friend",
     },
 ]
 
@@ -232,7 +232,7 @@ def main(*, reset: bool = False) -> None:
             kind = row.get("post_kind") or "community"
             ai_mode_val = None
             if kind == "ai":
-                ai_mode_val = row.get("ai_mode") or "simple"
+                ai_mode_val = row.get("ai_mode") or "quick"
                 n_ai += 1
             else:
                 n_comm += 1

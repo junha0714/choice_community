@@ -1,5 +1,7 @@
 "use client";
 
+import { useId } from "react";
+
 type Props = {
   categories: string[];
   value: string;
@@ -13,10 +15,17 @@ export function CategorySelect({
   onChange,
   disabled,
 }: Props) {
+  const id = useId();
+  const selectId = `${id}-category`;
+
   return (
-    <label className="block text-sm font-medium text-zinc-700 dark:text-white">
+    <label
+      htmlFor={selectId}
+      className="block text-sm font-medium text-zinc-700 dark:text-white"
+    >
       카테고리
       <select
+        id={selectId}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled || categories.length === 0}

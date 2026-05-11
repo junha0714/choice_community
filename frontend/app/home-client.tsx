@@ -31,6 +31,12 @@ type PaginatedPosts = {
   total_pages: number;
 };
 
+type StatsSummary = {
+  total_posts: number;
+  total_votes: number;
+  ai_recommendations: number;
+};
+
 function authorLabel(post: Post): string {
   if (post.author_nickname) return post.author_nickname;
   if (post.user_id != null) return `사용자 #${post.user_id}`;
@@ -47,17 +53,28 @@ function formatDateLabel(iso: string): string {
   });
 }
 
+function hasPostImage(post: Pick<Post, "content">): boolean {
+  // 글쓰기에서 이미지 업로드 시 마크다운 `![img](url)` 형태로 삽입됨
+  return /!\[[^\]]*]\([^)]+\)/.test(post.content);
+}
+
+function fmtNumber(n: number | null | undefined): string {
+  const v = typeof n === "number" && Number.isFinite(n) ? n : 0;
+  return new Intl.NumberFormat("ko-KR").format(v);
+}
+
 function HomeInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const category = searchParams.get("category");
   const searchQ = searchParams.get("q")?.trim() || "";
-  const sortParam = searchParams.get("sort")?.trim() || "likes";
+  const sortParam = searchParams.get("sort")?.trim() || "latest";
   const tagParam = searchParams.get("tag")?.trim() || "";
   const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
 
-  const SORTS = ["likes", "harmony", "comments", "votes"] as const;
+  const SORTS = ["latest", "likes", "harmony", "comments", "votes"] as const;
   const SORT_LABELS: Record<(typeof SORTS)[number], string> = {
+    latest: "최신",
     likes: "좋아요",
     harmony: "조회",
     comments: "댓글",
@@ -65,9 +82,10 @@ function HomeInner() {
   };
   const sort = (SORTS as readonly string[]).includes(sortParam)
     ? sortParam
-    : "likes";
+    : "latest";
 
   const [data, setData] = useState<PaginatedPosts | null>(null);
+  const [summary, setSummary] = useState<StatsSummary | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -90,7 +108,7 @@ function HomeInner() {
       const token = getStoredToken();
       if (token) headers.Authorization = `Bearer ${token}`;
     }
-    const timeoutMs = process.env.NODE_ENV === "production" ? 120000 : 15000;
+    const timeoutMs = 15000;
     const res = await fetchWithTimeout(`${API_BASE_URL}/posts?${qs}`, {
       headers,
       signal,
@@ -101,9 +119,14 @@ function HomeInner() {
       let detail = "";
       const ct = res.headers.get("content-type") || "";
       if (ct.includes("application/json")) {
-        const j = await res.json().catch(() => null);
-        if (j && typeof j === "object" && "detail" in j && typeof (j as any).detail === "string") {
-          detail = (j as any).detail;
+        const j = (await res.json().catch(() => null)) as unknown;
+        if (
+          j &&
+          typeof j === "object" &&
+          "detail" in j &&
+          typeof (j as Record<string, unknown>).detail === "string"
+        ) {
+          detail = (j as Record<string, unknown>).detail as string;
         }
       }
       const base =
@@ -117,11 +140,33 @@ function HomeInner() {
       typeof json === "object" &&
       json != null &&
       "items" in json &&
-      Array.isArray((json as any).items)
+      Array.isArray((json as Record<string, unknown>).items)
         ? (json as PaginatedPosts)
         : null;
     if (!parsed) throw new Error("응답 형식이 올바르지 않아요. 잠시 후 다시 시도해 주세요.");
     setData(parsed);
+  };
+
+  const fetchSummary = async (signal?: AbortSignal) => {
+    try {
+      const res = await fetchWithTimeout(`${API_BASE_URL}/stats/summary`, {
+        signal,
+        timeoutMs: 10000,
+      });
+      if (!res.ok) return;
+      const json = (await res.json()) as unknown;
+      if (!json || typeof json !== "object") return;
+      const j = json as Record<string, unknown>;
+      const parsed: StatsSummary = {
+        total_posts: typeof j.total_posts === "number" ? j.total_posts : 0,
+        total_votes: typeof j.total_votes === "number" ? j.total_votes : 0,
+        ai_recommendations:
+          typeof j.ai_recommendations === "number" ? j.ai_recommendations : 0,
+      };
+      setSummary(parsed);
+    } catch {
+      // ignore (hero 통계는 선택적)
+    }
   };
 
   useEffect(() => {
@@ -135,7 +180,7 @@ function HomeInner() {
     setError(null);
     (async () => {
       try {
-        await fetchPosts(controller.signal);
+        await Promise.all([fetchPosts(controller.signal), fetchSummary(controller.signal)]);
       } catch (e) {
         if (controller.signal.aborted) return;
         if (isAbortError(e)) {
@@ -178,8 +223,8 @@ function HomeInner() {
     if (category) p.set("category", category);
     const qv = overrides && "q" in overrides ? overrides.q ?? "" : searchQ;
     if (qv) p.set("q", qv);
-    const sv = overrides && "sort" in overrides ? overrides.sort ?? "likes" : sort;
-    if (sv && sv !== "likes") p.set("sort", sv);
+    const sv = overrides && "sort" in overrides ? overrides.sort ?? "latest" : sort;
+    if (sv && sv !== "latest") p.set("sort", sv);
     const tv = overrides && "tag" in overrides ? overrides.tag ?? "" : tagParam;
     if (tv) p.set("tag", tv);
     const pg = overrides?.page !== undefined ? overrides.page : page;
@@ -216,7 +261,7 @@ function HomeInner() {
   const total = data?.total ?? 0;
 
   return (
-    <div className="space-y-10 rounded-2xl border border-sky-300/55 bg-linear-to-b from-sky-50 via-white to-cyan-50/35 p-4 shadow-[0_16px_52px_-30px_rgba(2,132,199,0.25)] ring-1 ring-white/70 dark:border-sky-800/45 dark:bg-linear-to-b dark:from-zinc-950 dark:via-sky-950/25 dark:to-zinc-900 dark:ring-sky-900/25 sm:p-6">
+    <div className="space-y-8 rounded-2xl border border-sky-300/55 bg-linear-to-b from-sky-50 via-white to-cyan-50/35 p-4 shadow-[0_16px_52px_-30px_rgba(2,132,199,0.25)] ring-1 ring-white/70 dark:border-sky-800/45 dark:bg-linear-to-b dark:from-zinc-950 dark:via-sky-950/25 dark:to-zinc-900 dark:ring-sky-900/25 sm:space-y-9 sm:p-5 md:space-y-10 md:p-6 lg:p-7 lg:space-y-11 xl:p-8 xl:space-y-12 2xl:p-10 2xl:space-y-14">
       {(category || searchQ || tagParam) && (
         <div className="flex flex-wrap items-center gap-2">
           {category && (
@@ -258,39 +303,125 @@ function HomeInner() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-sky-300/55 bg-white p-6 shadow-[0_12px_32px_-24px_rgba(2,132,199,0.18)] dark:border-sky-800/50 dark:bg-none dark:bg-[#111827] dark:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] sm:p-8">
-        <p className="text-xs font-medium uppercase tracking-wider text-sky-600/95 dark:text-sky-400/90">
-          Choice Community
-        </p>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-sky-50 sm:text-3xl">
-          일상 선택 고민 커뮤니티
-        </h1>
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold text-sky-950/85 dark:text-sky-100/80">
-          <span className="rounded-full border border-sky-200/80 bg-sky-50/80 px-3 py-1 dark:border-sky-800/70 dark:bg-sky-950/35">
-            투표로 의견 모으기
-          </span>
-          <span className="rounded-full border border-cyan-200/80 bg-cyan-50/70 px-3 py-1 dark:border-cyan-900/60 dark:bg-cyan-950/25">
-            AI로 정리/추천
-          </span>
-          <span className="rounded-full border border-emerald-200/80 bg-emerald-50/70 px-3 py-1 dark:border-emerald-900/55 dark:bg-emerald-950/20">
-            후기로 검증
-          </span>
+      <div className="rounded-2xl border border-sky-300/55 bg-white p-5 shadow-[0_12px_32px_-24px_rgba(2,132,199,0.18)] dark:border-sky-800/50 dark:bg-none dark:bg-[#111827] dark:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)] sm:p-6 md:p-7 lg:p-8 xl:p-9 2xl:p-10">
+        <div className="flex flex-col gap-6 md:gap-7 lg:flex-row lg:items-start lg:justify-between lg:gap-8 xl:gap-10 2xl:gap-12">
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase tracking-wider text-sky-600/95 dark:text-sky-400/90">
+              Choice Community
+            </p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-sky-50 sm:text-3xl md:text-[2rem] lg:text-4xl xl:text-[2.5rem] 2xl:text-5xl 2xl:leading-tight">
+              AI와 사람의 의견으로 더 나은 선택을
+            </h1>
+            <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-sky-950/85 dark:text-sky-100/80">
+              <span className="rounded-full border border-sky-200/80 bg-sky-50/80 px-3 py-1 dark:border-sky-800/70 dark:bg-sky-950/35">
+                투표로 의견 모으기
+              </span>
+              <span className="rounded-full border border-indigo-200/80 bg-indigo-50/70 px-3 py-1 dark:border-indigo-900/60 dark:bg-indigo-950/20">
+                AI로 정리/추천
+              </span>
+              <span className="rounded-full border border-emerald-200/80 bg-emerald-50/70 px-3 py-1 dark:border-emerald-900/55 dark:bg-emerald-950/20">
+                사람들의 경험/의견
+              </span>
+            </div>
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <Link
+                href="/write/ai"
+                className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-900/25 transition hover:bg-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300/70 focus-visible:ring-offset-2 dark:bg-indigo-500 dark:hover:bg-indigo-400 dark:focus-visible:ring-indigo-500/40 dark:focus-visible:ring-offset-0"
+              >
+                고민 글쓰기
+              </Link>
+            </div>
+          </div>
+
+          <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-3 md:gap-4 lg:w-[360px] lg:grid-cols-1 xl:w-[400px] 2xl:w-[440px] 2xl:gap-5">
+            <div className="rounded-2xl border border-sky-200/80 bg-linear-to-br from-sky-50/90 to-white p-4 shadow-[0_10px_28px_-20px_rgba(2,132,199,0.2)] dark:border-sky-800/55 dark:from-sky-950/30 dark:to-zinc-950">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold text-sky-700/90 dark:text-sky-300/80">
+                    누적 고민 글
+                  </p>
+                  <p className="mt-1 text-xl font-bold tracking-tight text-zinc-900 dark:text-white tabular-nums">
+                    {fmtNumber(summary?.total_posts)}
+                  </p>
+                </div>
+                <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-sky-600/10 text-sky-700 ring-1 ring-sky-200/80 dark:bg-sky-400/10 dark:text-sky-200 dark:ring-sky-800/60">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden>
+                    <path
+                      d="M8 9h8M8 13h6M6 21h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3l-1-2H10L9 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </span>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-cyan-200/70 bg-linear-to-br from-cyan-50/85 to-white p-4 shadow-[0_10px_28px_-20px_rgba(6,182,212,0.18)] dark:border-cyan-900/50 dark:from-cyan-950/20 dark:to-zinc-950">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold text-cyan-700/90 dark:text-cyan-300/80">
+                    누적 투표 참여
+                  </p>
+                  <p className="mt-1 text-xl font-bold tracking-tight text-zinc-900 dark:text-white tabular-nums">
+                    {fmtNumber(summary?.total_votes)}
+                  </p>
+                </div>
+                <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-600/10 text-cyan-700 ring-1 ring-cyan-200/80 dark:bg-cyan-400/10 dark:text-cyan-200 dark:ring-cyan-900/60">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden>
+                    <path
+                      d="M8 12.5l2.2 2.2L16.5 8.4"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M21 12a9 9 0 1 1-9-9 9 9 0 0 1 9 9Z"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                    />
+                  </svg>
+                </span>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-indigo-200/70 bg-linear-to-br from-indigo-50/80 to-white p-4 shadow-[0_10px_28px_-20px_rgba(99,102,241,0.18)] dark:border-indigo-900/50 dark:from-indigo-950/20 dark:to-zinc-950">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold text-indigo-700/90 dark:text-indigo-300/80">
+                    AI 추천 완료
+                  </p>
+                  <p className="mt-1 text-xl font-bold tracking-tight text-zinc-900 dark:text-white tabular-nums">
+                    {fmtNumber(summary?.ai_recommendations)}
+                  </p>
+                </div>
+                <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600/10 text-indigo-700 ring-1 ring-indigo-200/80 dark:bg-indigo-400/10 dark:text-indigo-200 dark:ring-indigo-900/60">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden>
+                    <path
+                      d="M9.5 14.5a3 3 0 0 1 5 0"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                    />
+                    <path
+                      d="M7 10.5v-1A5 5 0 0 1 12 4.5a5 5 0 0 1 5 5v1"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                    />
+                    <path
+                      d="M6 10.5h12v7A2.5 2.5 0 0 1 15.5 20h-7A2.5 2.5 0 0 1 6 17.5v-7Z"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                    />
+                  </svg>
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <Link
-            href="/write"
-            className="inline-flex items-center justify-center rounded-xl bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-sky-900/20 transition hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60 focus-visible:ring-offset-2 dark:bg-sky-500 dark:hover:bg-sky-400 dark:focus-visible:ring-sky-500/35 dark:focus-visible:ring-offset-0"
-          >
-            고민 글쓰기
-          </Link>
-          <Link
-            href="/write/ai"
-            className="text-sm font-semibold text-cyan-800/90 underline-offset-4 transition hover:underline dark:text-cyan-300/90"
-          >
-            AI로 같이 쓰기 →
-          </Link>
-        </div>
-        <div className="mt-5 flex w-full max-w-2xl flex-col gap-4 sm:mt-6">
+        <div className="mt-5 flex w-full max-w-2xl flex-col gap-4 sm:mt-6 md:max-w-3xl md:gap-5 lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl">
           <form
             onSubmit={handleSearchSubmit}
             className="flex w-full flex-col gap-2 sm:flex-row sm:items-center"
@@ -381,12 +512,12 @@ function HomeInner() {
         </div>
       </div>
 
-      <section aria-labelledby="recent-posts-heading" className="space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-2">
-          <div className="border-l-2 border-sky-500/85 pl-3 dark:border-sky-400/80">
+      <section aria-labelledby="recent-posts-heading" className="space-y-4 md:space-y-5 lg:space-y-6">
+        <div className="flex flex-wrap items-end justify-between gap-2 md:gap-3">
+          <div className="border-l-2 border-sky-500/85 pl-3 dark:border-sky-400/80 md:pl-4">
             <h2
               id="recent-posts-heading"
-              className="text-lg font-semibold tracking-tight text-sky-950 dark:text-sky-100"
+              className="text-lg font-semibold tracking-tight text-sky-950 dark:text-sky-100 md:text-xl lg:text-2xl"
             >
               최근 고민 글
             </h2>
@@ -432,128 +563,182 @@ function HomeInner() {
             <p className="text-sm text-sky-950/85 dark:text-sky-100/90">
               {searchQ || category || tagParam
                 ? "조건에 맞는 글이 없어요. 다른 검색어나 필터를 써 보세요."
-                : "아직 글이 없어요. 투표 고민 또는 AI 고민으로 첫 글을 남겨보세요."}
+                : "아직 글이 없어요. 고민 글쓰기로 첫 글을 남겨보세요."}
             </p>
             {!searchQ && !category && !tagParam && (
               <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
                 <Link
-                  href="/write"
-                  className="inline-flex items-center justify-center rounded-xl bg-sky-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-sky-900/20 transition hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50 focus-visible:ring-offset-2 dark:bg-sky-500 dark:hover:bg-sky-400"
-                >
-                  투표 고민 쓰기
-                </Link>
-                <Link
                   href="/write/ai"
-                  className="inline-flex items-center justify-center rounded-xl border border-cyan-400/75 bg-cyan-50/95 px-4 py-2 text-sm font-medium text-cyan-950 shadow-sm transition hover:border-cyan-500 hover:bg-cyan-100/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 focus-visible:ring-offset-2 dark:border-cyan-700/70 dark:bg-cyan-950/45 dark:text-cyan-50 dark:hover:border-cyan-600 dark:hover:bg-cyan-900/50"
+                  className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-indigo-900/25 transition hover:bg-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/55 focus-visible:ring-offset-2 dark:bg-indigo-500 dark:hover:bg-indigo-400"
                 >
-                  AI와 함께 고민하기
+                  고민 글쓰기
                 </Link>
               </div>
             )}
           </div>
         ) : (
           <>
-            <div className="hidden rounded-xl border border-sky-200/70 bg-white px-4 py-2 text-[11px] font-semibold text-zinc-600 shadow-[0_6px_18px_-14px_rgba(2,132,199,0.18)] dark:border-sky-800/45 dark:bg-[#16202A] dark:text-[#AFC6D8] sm:block">
-              <div className="grid grid-cols-[120px_1fr_120px_90px_70px_70px] items-center gap-3">
-                <div className="truncate">탭</div>
-                <div className="truncate text-center">제목</div>
+            <div className="hidden rounded-xl border border-sky-200/75 bg-white/90 px-4 py-2 text-[11px] font-semibold text-zinc-600 shadow-[0_10px_26px_-24px_rgba(2,132,199,0.18)] backdrop-blur-sm dark:border-sky-800/45 dark:bg-[#16202A]/60 dark:text-[#AFC6D8] sm:block">
+              <div className="grid grid-cols-[150px_1fr_120px_90px_70px_70px] items-center gap-3">
+                <div className="truncate">카테고리</div>
+                <div className="truncate text-left">제목</div>
                 <div className="truncate text-right">글쓴이</div>
                 <div className="truncate text-right">날짜</div>
                 <div className="truncate text-right">조회</div>
-                <div className="truncate text-right">추천</div>
+                <div className="truncate text-right">좋아요</div>
               </div>
             </div>
 
-            <ul className="list-none space-y-2.5 p-0 sm:space-y-0">
-            {posts.map((post) => (
-              <li key={post.id}>
-                <Link
-                  href={`/posts/${post.id}`}
-                  title={post.options}
-                  className="group relative flex cursor-pointer flex-row items-start gap-2 rounded-xl border border-sky-200/70 bg-white px-3 py-2.5 shadow-[0_8px_22px_-18px_rgba(2,132,199,0.18)] transition duration-200 hover:-translate-y-0.5 hover:border-sky-400 hover:shadow-[0_18px_56px_-26px_rgba(14,165,233,0.32)] focus-visible:-translate-y-0.5 focus-visible:border-sky-500 focus-visible:shadow-[0_18px_56px_-26px_rgba(14,165,233,0.32)] dark:border-sky-800/45 dark:bg-none dark:bg-[#16202A] dark:hover:border-sky-500/85 dark:hover:shadow-[0_18px_56px_-28px_rgba(56,189,248,0.22)] dark:focus-visible:border-sky-500/90 dark:focus-visible:shadow-[0_18px_56px_-28px_rgba(56,189,248,0.22)] sm:translate-y-0 sm:rounded-none sm:border-x-0 sm:border-t-0 sm:border-b sm:border-sky-300/85 sm:bg-transparent sm:px-4 sm:py-3 sm:shadow-none sm:hover:bg-sky-50/70 sm:hover:shadow-none dark:sm:border-sky-700/70 dark:sm:hover:bg-sky-950/25"
-                >
-                  {/* Mobile card */}
-                  <div className="min-w-0 flex-1 sm:hidden">
-                    <div className="flex flex-col gap-1 sm:gap-1.5">
-                      <div className="flex flex-wrap items-center gap-2 sm:hidden">
-                        <span className="line-clamp-2 text-sm font-semibold leading-snug text-zinc-950 transition group-hover:text-sky-900 dark:text-white dark:group-hover:text-white">
-                          {post.title}
-                        </span>
-                        {(post.post_kind ?? "community") === "ai" ? (
-                          <span className="shrink-0 rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-900 ring-1 ring-inset ring-sky-200/90 dark:bg-[#2b1f4a] dark:text-white dark:ring-[#9B5DE5]/40">
-                            AI
-                          </span>
-                        ) : (
-                          <span className="shrink-0 rounded-full bg-emerald-100/90 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-900/90 ring-1 ring-inset ring-emerald-200/70 dark:bg-[#16283a] dark:text-[#4A90E2] dark:ring-[#4A90E2]/35">
-                            투표
-                          </span>
-                        )}
-                      </div>
-
-                    </div>
-                    <p className="mt-1 line-clamp-1 text-xs text-sky-800/80 dark:text-sky-200/75 sm:hidden">
-                      <span className="font-semibold text-sky-600/90 dark:text-sky-300/90">
-                        선택지
-                      </span>{" "}
-                      {post.options}
-                    </p>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-snug text-zinc-500 dark:text-[#AFC6D8] sm:hidden">
-                      <span className="font-medium text-zinc-700 dark:text-[#cbd5e1]">
-                        {post.category}
-                      </span>
-                      <span className="text-zinc-400 dark:text-[#7f93a8]">·</span>
-                      <span>조회 {post.view_count ?? 0}</span>
-                      <span className="text-zinc-400 dark:text-[#7f93a8]">·</span>
-                      <span>♥ {post.like_count ?? 0}</span>
-                    </div>
-                  </div>
-
-                  {/* Desktop table-like row */}
-                  <div className="hidden w-full sm:block">
-                    <div className="grid grid-cols-[120px_1fr_120px_90px_70px_70px] items-center gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1">
+            <ul className="list-none divide-y divide-sky-100/90 rounded-2xl border border-sky-200/70 bg-white/85 p-0 shadow-[0_10px_30px_-26px_rgba(2,132,199,0.18)] backdrop-blur-sm dark:divide-sky-900/50 dark:border-sky-800/45 dark:bg-[#16202A]/60 dark:shadow-sky-950/25">
+              {posts.map((post) => {
+                const kind = (post.post_kind ?? "community") as string;
+                const isAi = kind === "ai";
+                return (
+                  <li key={post.id}>
+                    <Link
+                      href={`/posts/${post.id}`}
+                      title={post.options}
+                      className={[
+                        "group block px-4 py-3 transition",
+                        "hover:bg-sky-50/75 focus-visible:bg-sky-50/75",
+                        "dark:hover:bg-sky-950/30 dark:focus-visible:bg-sky-950/30",
+                        "focus-visible:outline-none",
+                      ].join(" ")}
+                    >
+                      {/* Mobile */}
+                      <div className="sm:hidden">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="truncate rounded-full border border-sky-200/85 bg-sky-50/80 px-2.5 py-1 text-[11px] font-semibold text-sky-950/90 dark:border-sky-800/70 dark:bg-sky-950/35 dark:text-sky-100">
                             {post.category}
                           </span>
-                          {(post.post_kind ?? "community") === "ai" ? (
-                            <span className="shrink-0 rounded-full bg-sky-100 px-2 py-1 text-[10px] font-semibold text-sky-900 ring-1 ring-inset ring-sky-200/90 dark:bg-[#2b1f4a] dark:text-white dark:ring-[#9B5DE5]/40">
-                              AI
+                          {isAi ? (
+                            <span className="shrink-0 rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-900 ring-1 ring-inset ring-indigo-200/80 dark:bg-indigo-500/10 dark:text-indigo-100 dark:ring-indigo-400/20">
+                              AI 고민
                             </span>
-                          ) : (
-                            <span className="shrink-0 rounded-full bg-emerald-100/90 px-2 py-1 text-[10px] font-semibold text-emerald-900/90 ring-1 ring-inset ring-emerald-200/70 dark:bg-[#16283a] dark:text-[#4A90E2] dark:ring-[#4A90E2]/35">
-                              투표
+                          ) : null}
+                        </div>
+
+                        <h3 className="mt-2 line-clamp-2 text-sm font-bold leading-snug tracking-tight text-zinc-950 transition group-hover:text-sky-900 dark:text-white">
+                          {post.title}
+                          {(post.comment_count ?? 0) > 0 ? (
+                            <span className="ml-1 text-[12px] font-semibold text-zinc-500 dark:text-[#9bb3c7] tabular-nums">
+                              ({post.comment_count})
                             </span>
-                          )}
+                          ) : null}
+                        </h3>
+
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-zinc-500 dark:text-[#9bb3c7]">
+                          <span className="font-medium text-zinc-700 dark:text-sky-200/90">
+                            {authorLabel(post)}
+                          </span>
+                          <span className="text-zinc-300 dark:text-sky-800/80">·</span>
+                          <span className="tabular-nums">{formatDateLabel(post.created_at)}</span>
+                          <span className="text-zinc-300 dark:text-sky-800/80">·</span>
+                          <span className="tabular-nums">
+                            조회 {fmtNumber(post.view_count)} · ♥ {fmtNumber(post.like_count)}
+                          </span>
+                        </div>
+
+                        <p className="mt-1 line-clamp-1 text-[11px] text-sky-800/75 dark:text-sky-200/70">
+                          <span className="font-semibold text-sky-600/90 dark:text-sky-300/90">
+                            선택지
+                          </span>{" "}
+                          {post.options}
+                        </p>
+                      </div>
+
+                      {/* Desktop row */}
+                      <div className="hidden sm:block">
+                        <div className="grid grid-cols-[150px_1fr_120px_90px_70px_70px] items-center gap-3">
+                          <div className="min-w-0">
+                            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                              <span className="truncate rounded-full border border-sky-200/85 bg-sky-50/80 px-2.5 py-1 text-[11px] font-semibold text-sky-950/90 dark:border-sky-800/70 dark:bg-sky-950/35 dark:text-sky-100">
+                                {post.category}
+                              </span>
+                              {isAi ? (
+                                <span className="shrink-0 rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold text-indigo-900 ring-1 ring-inset ring-indigo-200/80 dark:bg-indigo-500/10 dark:text-indigo-100 dark:ring-indigo-400/20">
+                                  AI
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="flex min-w-0 items-center gap-1">
+                              {hasPostImage(post) ? (
+                                <span
+                                  className="shrink-0 text-amber-700/90 dark:text-amber-300/90"
+                                  title="사진 포함"
+                                  aria-label="사진 포함"
+                                >
+                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden>
+                                    <path
+                                      d="M4 7.5A2.5 2.5 0 0 1 6.5 5h2.2c.43 0 .83-.2 1.07-.55l.86-1.3c.23-.35.63-.56 1.06-.56h.62c.43 0 .83.2 1.06.56l.86 1.3c.24.35.64.55 1.07.55h2.2A2.5 2.5 0 0 1 20 7.5v10A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5v-10Z"
+                                      stroke="currentColor"
+                                      strokeWidth="1.6"
+                                    />
+                                    <path
+                                      d="M9 13.5l1.7 1.7 3.8-3.8 3.5 3.5"
+                                      stroke="currentColor"
+                                      strokeWidth="1.6"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                    <path
+                                      d="M15.5 10a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"
+                                      fill="currentColor"
+                                    />
+                                  </svg>
+                                </span>
+                              ) : null}
+                              <span className="min-w-0 flex flex-1 flex-wrap items-center gap-1">
+                                <span className="min-w-0 truncate text-sm font-bold tracking-tight text-zinc-950 transition group-hover:text-sky-900 dark:text-white">
+                                  {post.title}
+                                  {(post.comment_count ?? 0) > 0 ? (
+                                    <span className="ml-1 text-[11px] font-semibold text-zinc-500 dark:text-[#9bb3c7] tabular-nums">
+                                      [{post.comment_count}]
+                                    </span>
+                                  ) : null}
+                                </span>
+                                {post.tags && post.tags.length > 0 ? (
+                                  <span className="hidden items-center gap-1 lg:flex">
+                                    {post.tags.slice(0, 3).map((t) => (
+                                      <span
+                                        key={t}
+                                        className="rounded-full border border-sky-200/75 bg-white/90 px-2 py-0.5 text-[11px] font-medium text-sky-700 shadow-sm shadow-sky-900/5 transition group-hover:border-sky-300 group-hover:bg-sky-50 dark:border-sky-800/60 dark:bg-zinc-900/60 dark:text-sky-200 dark:group-hover:border-sky-700 dark:group-hover:bg-sky-950/45"
+                                      >
+                                        #{t}
+                                      </span>
+                                    ))}
+                                    {post.tags.length > 3 ? (
+                                      <span className="rounded-full border border-zinc-200/80 bg-zinc-50/70 px-2 py-0.5 text-[11px] font-medium text-zinc-500 dark:border-sky-900/50 dark:bg-zinc-950/40 dark:text-[#9bb3c7]">
+                                        +{post.tags.length - 3}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="truncate text-right text-[11px] text-zinc-500 dark:text-[#9bb3c7]">
+                            {authorLabel(post)}
+                          </div>
+                          <div className="truncate text-right text-[11px] tabular-nums text-zinc-500 dark:text-[#9bb3c7]">
+                            {formatDateLabel(post.created_at)}
+                          </div>
+                          <div className="truncate text-right text-[11px] tabular-nums text-zinc-500 dark:text-[#9bb3c7]">
+                            {fmtNumber(post.view_count)}
+                          </div>
+                          <div className="truncate text-right text-[11px] tabular-nums text-zinc-500 dark:text-[#9bb3c7]">
+                            {fmtNumber(post.like_count)}
+                          </div>
                         </div>
                       </div>
-                      <div className="min-w-0">
-                        <div className="flex min-w-0 items-center justify-center gap-2">
-                          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-950 dark:text-white">
-                            {post.title}
-                          </span>
-                          <span className="shrink-0 text-[11px] font-semibold text-zinc-500 dark:text-[#9bb3c7]">
-                            {(post.comment_count ?? 0) > 0 ? `댓글 ${post.comment_count}` : ""}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="truncate text-right text-[11px] text-zinc-500 dark:text-[#9bb3c7]">
-                        {authorLabel(post)}
-                      </div>
-                      <div className="truncate text-right text-[11px] tabular-nums text-zinc-500 dark:text-[#9bb3c7]">
-                        {formatDateLabel(post.created_at)}
-                      </div>
-                      <div className="truncate text-right text-[11px] tabular-nums text-zinc-500 dark:text-[#9bb3c7]">
-                        {post.view_count ?? 0}
-                      </div>
-                      <div className="truncate text-right text-[11px] tabular-nums text-zinc-500 dark:text-[#9bb3c7]">
-                        {post.like_count ?? 0}
-                      </div>
-                    </div>
-                  </div>
-                </Link>
-              </li>
-            ))}
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           </>
         )}

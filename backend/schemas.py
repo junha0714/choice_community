@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from typing import List, Literal
 from datetime import datetime
 
@@ -57,7 +57,22 @@ class PostCreate(BaseModel):
     category: str
     options: List[str]
     post_kind: Literal["community", "ai"] = "community"
-    ai_mode: Literal["simple", "detailed"] | None = None
+    ai_mode: str | None = None
+    ai_question_steps: int | None = Field(
+        default=None,
+        ge=3,
+        le=10,
+        description="AI 글만: 질문 횟수. 비우면 스타일별 기본",
+    )
+
+    @field_validator("ai_mode", mode="before")
+    @classmethod
+    def _normalize_post_ai_mode(cls, v):
+        if v is None:
+            return None
+        from ai_conversation import normalize_ai_mode
+
+        return normalize_ai_mode(str(v))
     tags: List[str] | None = None
     vote_deadline_at: datetime | None = Field(
         default=None,
@@ -138,8 +153,10 @@ class PostResponse(BaseModel):
     options: str
     post_kind: str = "community"
     ai_mode: str | None = None
+    ai_question_steps: int | None = None
     view_count: int = 0
     like_count: int = 0
+    comment_count: int = 0
     liked_by_me: bool | None = None
     ai_recommended: str | None = None
     ai_reason: str | None = None
@@ -269,8 +286,93 @@ class AIQuestionFlowResponse(BaseModel):
 
 
 class AIAnswerRequest(BaseModel):
-    answer: str
+    """action이 answer가 아니면 answer 필드는 무시되고 서버가 고정 문구로 대체한다."""
 
+    answer: str = ""
+    action: Literal["answer", "skip_question", "finish_here"] = Field(
+        default="answer",
+        description="answer=일반, skip_question=질문 패스, finish_here=남은 질문 없이 추천",
+    )
+
+    @model_validator(mode="after")
+    def _normalize_ai_answer(self):
+        from ai_conversation import AI_CANNED_FINISH_ANSWER, AI_CANNED_SKIP_ANSWER
+
+        if self.action == "skip_question":
+            object.__setattr__(self, "answer", AI_CANNED_SKIP_ANSWER)
+        elif self.action == "finish_here":
+            extra = (self.answer or "").strip()
+            merged = (
+                f"{AI_CANNED_FINISH_ANSWER} {extra}".strip()
+                if extra
+                else AI_CANNED_FINISH_ANSWER
+            )
+            object.__setattr__(self, "answer", merged)
+        else:
+            a = (self.answer or "").strip()
+            if not a:
+                raise ValueError("답변을 입력해 주세요.")
+            object.__setattr__(self, "answer", a)
+        return self
+
+
+class PostDraftSuggestRequest(BaseModel):
+    title: str = Field(default="", max_length=500)
+    content: str = Field(default="", max_length=50_000)
+
+
+class PostDraftSuggestResponse(BaseModel):
+    options: List[str]
+    category: str
+    disclaimer: str
+
+
+class CategoryAutoSuggestRequest(BaseModel):
+    title: str = Field(default="", max_length=500)
+    content: str = Field(default="", max_length=50_000)
+
+
+class CategoryAutoSuggestResponse(BaseModel):
+    category: str
+    disclaimer: str
+
+
+# --- AI 세션(대화 후 게시) ---
+class AISessionStartRequest(BaseModel):
+    title: str
+    content: str
+    category: str
+    options: List[str]
+    ai_mode: str = Field(default="quick", description="quick|deep|friend|random_fun")
+    ai_question_steps: int = Field(default=5, ge=3, le=10)
+
+    @field_validator("ai_mode", mode="before")
+    @classmethod
+    def _normalize_session_ai_mode(cls, v):
+        from ai_conversation import normalize_ai_mode
+
+        return normalize_ai_mode(v if v is not None else "quick")
+    tags: List[str] | None = None
+    vote_deadline_at: datetime | None = None
+
+    @field_validator("options")
+    @classmethod
+    def validate_ai_session_options(cls, v: List[str]) -> List[str]:
+        stripped = [x.strip() for x in v if str(x).strip()]
+        if len(stripped) < 2:
+            raise ValueError("선택지는 최소 2개 이상 입력해 주세요.")
+        if len(stripped) > 6:
+            raise ValueError("선택지는 최대 6개까지예요.")
+        return stripped
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def validate_ai_session_tags(cls, v):
+        return _normalize_tag_list(v if isinstance(v, list) else None)
+
+
+class AISessionStartResponse(AIQuestionFlowResponse):
+    session_id: str
 
 # --- 사이드바 / 통계 ---
 class CategoryStat(BaseModel):
@@ -299,6 +401,12 @@ class RecentCommentBrief(BaseModel):
     post_title: str
     author_nickname: str | None = None
     created_at: datetime
+
+
+class StatsSummary(BaseModel):
+    total_posts: int = 0
+    total_votes: int = 0
+    ai_recommendations: int = 0
 
 
 # --- 신고 · 차단 · 비밀번호 · 관리자 ---
@@ -375,6 +483,10 @@ class TagSuggestRequest(BaseModel):
     content: str = ""
     category: str | None = None
     selected: List[str] | None = None
+    use_ai: bool = Field(
+        default=True,
+        description="True: 제목·본문 기준 LLM 짧은 태그. False: 기존 게시글 태그 빈도 기반",
+    )
 
     @field_validator("selected", mode="before")
     @classmethod

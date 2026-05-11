@@ -10,6 +10,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.sql import func
 from database import Base
+import uuid
 
 
 class User(Base):
@@ -35,8 +36,10 @@ class Post(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     # community: 투표·댓글 중심 / ai: AI 질문·추천 플로우 허용
     post_kind = Column(String(20), nullable=False, server_default="community")
-    # ai 글만: simple(짧은 질문 3회) / detailed(질문 5회 + 선택지별 비교)
+    # ai 글만: quick|deep|friend|random_fun (레거시 simple/detailed·balance_game는 정규화)
     ai_mode = Column(String(20), nullable=True)
+    # ai 글만: 질문 라운드 수(3~10). NULL이면 스타일별 기본
+    ai_question_steps = Column(Integer, nullable=True)
     view_count = Column(Integer, nullable=False, server_default="0", default=0)
     like_count = Column(Integer, nullable=False, server_default="0", default=0)
     # AI 최종 결과
@@ -79,6 +82,39 @@ class AIInteraction(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     post_id = Column(Integer, ForeignKey("posts.id"), nullable=False)
+    step_number = Column(Integer, nullable=False)
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AISession(Base):
+    __tablename__ = "ai_sessions"
+
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    ai_mode = Column(String(20), nullable=False, server_default="quick")
+    ai_question_steps = Column(Integer, nullable=True)
+
+    title = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
+    category = Column(String, nullable=False)
+    options = Column(Text, nullable=False)  # 쉼표로 join한 문자열
+    tags = Column(Text, nullable=True)  # 쉼표로 구분된 태그(소문자)
+    vote_deadline_at = Column(DateTime(timezone=True), nullable=True)
+
+    ai_recommended = Column(Text, nullable=True)
+    ai_reason = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class AISessionInteraction(Base):
+    __tablename__ = "ai_session_interactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String(36), ForeignKey("ai_sessions.id"), nullable=False, index=True)
     step_number = Column(Integer, nullable=False)
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=True)

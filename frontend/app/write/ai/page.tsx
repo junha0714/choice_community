@@ -8,6 +8,99 @@ import { getStoredToken } from "@/lib/auth-storage";
 import { jsonAuthHeaders } from "@/lib/auth-headers";
 import { OptionInputs } from "@/components/OptionInputs";
 import { CategorySelect } from "@/components/CategorySelect";
+import { AiReasonDisplay } from "@/components/AiReasonDisplay";
+import {
+  RichComposer,
+  type RichComposerHandle,
+  richHtmlToMarkdown,
+  richHtmlToPlainText,
+} from "@/components/RichComposer";
+import { tryNavigateToWrite } from "@/lib/require-login-for-write";
+
+type AITranscriptItem = {
+  step: number;
+  question: string;
+  answer: string | null;
+};
+
+type AIFlowQuestion = {
+  type: "question";
+  step: number;
+  question: string;
+  transcript?: AITranscriptItem[];
+};
+
+type AIFlowResult = {
+  type: "result";
+  recommended: string;
+  reason: string;
+  transcript?: AITranscriptItem[];
+};
+
+type AIFlow = AIFlowQuestion | AIFlowResult;
+
+type AISessionStartResponse =
+  | (AIFlowQuestion & { session_id: string })
+  | (AIFlowResult & { session_id: string });
+
+type AiConversationStyle = "quick" | "deep" | "friend" | "random_fun";
+
+const AI_STYLE_OPTIONS: {
+  id: AiConversationStyle;
+  emoji: string;
+  title: string;
+  lines: string[];
+  defaultSteps: number;
+}[] = [
+  {
+    id: "quick",
+    emoji: "⚡",
+    title: "빠른 결정 모드",
+    lines: [
+      "가장 대중적이고 기본에 가까워요",
+      "질문 수는 적게, 빠르게 결론 쪽으로",
+      "지금 당장 정해야 할 때",
+      "템포 빠른 대화",
+    ],
+    defaultSteps: 4,
+  },
+  {
+    id: "deep",
+    emoji: "🧠",
+    title: "깊은 분석 모드",
+    lines: [
+      "성향·우선순위가 잘 드러나게",
+      "질문을 조금 더 파고들어요",
+      "끝에 선택지별 비교 요약(마크다운)",
+      "이유를 차분하게 길게",
+    ],
+    defaultSteps: 7,
+  },
+  {
+    id: "friend",
+    emoji: "💬",
+    title: "친구 상담 모드",
+    lines: [
+      "친구랑 톡하듯 반말 톤(이모지 없음)",
+      "공감은 살짝, 과한 심리분석은 피함",
+      "부담 없이 이어가요",
+      "딱딱한 설문 느낌 줄이기",
+    ],
+    defaultSteps: 5,
+  },
+  {
+    id: "random_fun",
+    emoji: "🎲",
+    title: "랜덤 결정 모드",
+    lines: [
+      "AI 질문 없이 바로 진행",
+      "선택지 중 하나가 무작위로 뽑혀요",
+      "뽑힌 것만 짧게 이유(비교 없음)",
+      "가볍게 정할 때",
+    ],
+    defaultSteps: 3,
+  },
+];
 
 type SimilarDraftPost = {
   id: number;
@@ -22,22 +115,35 @@ type SimilarDraftPost = {
 
 export default function WriteAIPage() {
   const router = useRouter();
+  const [phase, setPhase] = useState<"draft" | "chat" | "preview">("draft");
   const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
+  const [composerHtml, setComposerHtml] = useState("");
+  const composerRef = useRef<RichComposerHandle | null>(null);
   const [category, setCategory] = useState("");
   const [categories, setCategories] = useState<string[]>([]);
   const [options, setOptions] = useState(["", ""]);
   const [hasToken, setHasToken] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [aiMode, setAiMode] = useState<"simple" | "detailed">("simple");
+  const [aiMode, setAiMode] = useState<AiConversationStyle>("quick");
+  /** AI 질문 라운드 수 (백엔드 3~10) */
+  const [aiQuestionSteps, setAiQuestionSteps] = useState(4);
   const [tagsText, setTagsText] = useState("");
   const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
   const [tagSuggestLoading, setTagSuggestLoading] = useState(false);
-  const [voteDeadlineLocal, setVoteDeadlineLocal] = useState("");
   const [uploadingImage, setUploadingImage] = useState(false);
-  const contentRef = useRef<HTMLTextAreaElement>(null);
   const [similarDraft, setSimilarDraft] = useState<SimilarDraftPost[]>([]);
-  const [similarDraftLoading, setSimilarDraftLoading] = useState(false);
+
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [flow, setFlow] = useState<AIFlow | null>(null);
+  const [answerDraft, setAnswerDraft] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [draftSuggestLoading, setDraftSuggestLoading] = useState(false);
+  const [draftSuggestNotice, setDraftSuggestNotice] = useState("");
+  /** 카테고리: 자동(AI) vs 직접 선택 */
+  const [categoryPickerMode, setCategoryPickerMode] = useState<"auto" | "manual">(
+    "auto"
+  );
+  const [categoryAutoLoading, setCategoryAutoLoading] = useState(false);
 
   useEffect(() => {
     setHasToken(!!getStoredToken());
@@ -49,19 +155,53 @@ export default function WriteAIPage() {
       .then((d) => {
         const list: string[] = d?.categories ?? [];
         setCategories(list);
-        setCategory((prev) => prev || list[0] || "");
+        setCategory((prev) => prev || (list.includes("기타") ? "기타" : list[0] || ""));
       })
       .catch(() => {});
   }, []);
 
   useEffect(() => {
+    if (categoryPickerMode !== "auto" || categories.length === 0) return;
+    const t = title.trim();
+    const c = richHtmlToMarkdown(composerHtml).trim();
+    if (t.length + c.length < 10) {
+      setCategoryAutoLoading(false);
+      return;
+    }
+    setCategoryAutoLoading(true);
+    let cancelled = false;
+    const id = window.setTimeout(() => {
+      void fetch(`${API_BASE_URL}/meta/suggest-category`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: t, content: c }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (cancelled || !d) return;
+          const cat = (d as { category?: string }).category;
+          if (typeof cat === "string" && categories.includes(cat)) {
+            setCategory(cat);
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setCategoryAutoLoading(false);
+        });
+    }, 650);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(id);
+      setCategoryAutoLoading(false);
+    };
+  }, [title, composerHtml, categoryPickerMode, categories]);
+
+  useEffect(() => {
     const q = title.trim();
     if (q.length < 2) {
       setSimilarDraft([]);
-      setSimilarDraftLoading(false);
       return;
     }
-    setSimilarDraftLoading(true);
     const id = window.setTimeout(() => {
       const token = getStoredToken();
       const headers: HeadersInit = {};
@@ -73,10 +213,10 @@ export default function WriteAIPage() {
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           const items = (d && Array.isArray(d.items) ? d.items : []) as SimilarDraftPost[];
-          setSimilarDraft(items);
+          const uniq = Array.from(new Map(items.map((p) => [p.id, p])).values());
+          setSimilarDraft(uniq.slice(0, 5));
         })
-        .catch(() => setSimilarDraft([]))
-        .finally(() => setSimilarDraftLoading(false));
+        .catch(() => setSimilarDraft([]));
     }, 450);
     return () => window.clearTimeout(id);
   }, [title]);
@@ -89,7 +229,7 @@ export default function WriteAIPage() {
 
   useEffect(() => {
     const t = title.trim();
-    const c = content.trim();
+    const c = richHtmlToPlainText(composerHtml);
     const selected = parseTagsText(tagsText);
     if (t.length + c.length < 8) {
       setTagSuggestions([]);
@@ -119,7 +259,7 @@ export default function WriteAIPage() {
         .finally(() => setTagSuggestLoading(false));
     }, 550);
     return () => window.clearTimeout(id);
-  }, [title, content, category, tagsText]);
+  }, [title, composerHtml, category, tagsText]);
 
   const toggleTagFromSuggestion = (tag: string) => {
     const t = tag.trim().toLowerCase();
@@ -132,6 +272,7 @@ export default function WriteAIPage() {
   };
 
   const setOption = (index: number, value: string) => {
+    setDraftSuggestNotice("");
     const next = [...options];
     next[index] = value;
     setOptions(next);
@@ -145,27 +286,6 @@ export default function WriteAIPage() {
   const removeOption = (index: number) => {
     if (options.length <= 2) return;
     setOptions(options.filter((_, j) => j !== index));
-  };
-
-  const insertIntoContent = (snippet: string) => {
-    const el = contentRef.current;
-    if (!el) {
-      setContent((c) => (c ? `${c}\n\n${snippet}` : snippet));
-      return;
-    }
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    const before = content.slice(0, start);
-    const after = content.slice(end);
-    const sep = before && !before.endsWith("\n") ? "\n\n" : "";
-    const ins = sep + snippet;
-    const next = before + ins + after;
-    setContent(next);
-    requestAnimationFrame(() => {
-      el.focus();
-      const pos = start + ins.length;
-      el.setSelectionRange(pos, pos);
-    });
   };
 
   const handleImagePick = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -192,7 +312,10 @@ export default function WriteAIPage() {
         return;
       }
       const url = typeof data.url === "string" ? data.url : "";
-      if (url) insertIntoContent(`![img](${url})`);
+      if (url) {
+        const h = composerRef.current;
+        if (h) h.insertImageAtCursor(url);
+      }
     } finally {
       setUploadingImage(false);
     }
@@ -204,12 +327,13 @@ export default function WriteAIPage() {
       router.push("/login");
       return;
     }
-    if (!title.trim() || !content.trim()) {
+    const finalContent = richHtmlToMarkdown(composerHtml);
+    if (!title.trim() || !finalContent.trim()) {
       alert("제목과 고민 내용을 입력해줘");
       return;
     }
     if (!category) {
-      alert("카테고리를 선택해줘");
+      alert("카테고리를 불러오는 중이거나 비어 있어요. 잠시 후 다시 시도해줘.");
       return;
     }
     const optionList = options.map((o) => o.trim()).filter(Boolean);
@@ -221,26 +345,41 @@ export default function WriteAIPage() {
 
     setSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/posts`, {
+      const res = await fetch(`${API_BASE_URL}/ai-sessions/start`, {
         method: "POST",
         headers: jsonAuthHeaders(),
         body: JSON.stringify({
           title: title.trim(),
-          content: content.trim(),
+          content: finalContent,
           category,
           options: optionList,
-          post_kind: "ai",
           ai_mode: aiMode,
+          ai_question_steps: aiQuestionSteps,
           tags: tags.length ? tags : undefined,
-          vote_deadline_at: voteDeadlineLocal
-            ? new Date(voteDeadlineLocal).toISOString()
-            : undefined,
         }),
       });
 
       if (res.ok) {
-        const post = await res.json();
-        router.push(`/posts/${post.id}`);
+        const data = (await res.json()) as AISessionStartResponse;
+        setSessionId(data.session_id);
+        if (data.type === "result") {
+          setFlow({
+            type: "result",
+            recommended: data.recommended ?? "",
+            reason: data.reason ?? "",
+            transcript: data.transcript ?? [],
+          });
+          setPhase("preview");
+        } else {
+          setFlow({
+            type: "question",
+            step: data.step,
+            question: data.question,
+            transcript: data.transcript ?? [],
+          });
+          setAnswerDraft("");
+          setPhase("chat");
+        }
         return;
       }
       const data = await res.json().catch(() => ({}));
@@ -254,127 +393,403 @@ export default function WriteAIPage() {
           .join(" ");
         alert(msg || "입력을 확인해줘");
       } else {
-        alert(
-          typeof data.detail === "string" ? data.detail : "게시글 작성 실패"
-        );
+        alert(typeof data.detail === "string" ? data.detail : "AI 시작 실패");
       }
     } finally {
       setSubmitting(false);
     }
   };
 
+  const handleSuggestDraft = async () => {
+    const finalContent = richHtmlToMarkdown(composerHtml);
+    const t = title.trim();
+    const c = finalContent.trim();
+    if (t.length + c.length < 10) {
+      alert("제목과 본문을 조금 더 써 주면 자동 제안이 잘 나와요.");
+      return;
+    }
+    setDraftSuggestLoading(true);
+    setDraftSuggestNotice("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/meta/suggest-options-category`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: t, content: c }),
+      });
+      const d = (await res.json().catch(() => null)) as {
+        options?: string[];
+        category?: string;
+        disclaimer?: string;
+      } | null;
+      if (!res.ok || !d) {
+        alert("자동 제안을 불러오지 못했어요.");
+        return;
+      }
+      const opts = Array.isArray(d.options)
+        ? d.options.map((x) => String(x).trim()).filter(Boolean)
+        : [];
+      if (opts.length < 2) {
+        alert("선택지를 자동으로 만들기 어려워요. 제목·본문을 조금 더 적어 보세요.");
+        return;
+      }
+      setOptions(opts.slice(0, 6));
+      if (typeof d.disclaimer === "string" && d.disclaimer.trim()) {
+        setDraftSuggestNotice(d.disclaimer.trim());
+      }
+    } finally {
+      setDraftSuggestLoading(false);
+    }
+  };
+
+  const handleNext = async (action?: "answer" | "skip_question" | "finish_here") => {
+    if (!sessionId) return;
+    if (action === "finish_here") {
+      const ok = window.confirm(
+        "남은 질문 없이 지금 추천 결과로 넘어갈까요? (입력한 한 줄이 있으면 함께 전달돼요.)"
+      );
+      if (!ok) return;
+    }
+    const a = answerDraft.trim();
+    if ((!action || action === "answer") && !a) return;
+    setChatLoading(true);
+    try {
+      const body =
+        action === "skip_question" || action === "finish_here"
+          ? { action, answer: a }
+          : { answer: a };
+      const res = await fetch(`${API_BASE_URL}/ai-sessions/${sessionId}/next`, {
+        method: "POST",
+        headers: jsonAuthHeaders(),
+        body: JSON.stringify(body),
+      });
+      const data = (await res.json().catch(() => null)) as AIFlow | null;
+      if (!res.ok || !data) {
+        alert("AI 응답을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
+        return;
+      }
+      setAnswerDraft("");
+      setFlow(data);
+      if (data.type === "result") setPhase("preview");
+      else setPhase("chat");
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const handlePublish = async () => {
+    if (!sessionId) return;
+    setChatLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/ai-sessions/${sessionId}/publish`, {
+        method: "POST",
+        headers: jsonAuthHeaders(),
+      });
+      const data = (await res.json().catch(() => ({}))) as unknown;
+      if (!res.ok) {
+        const detail =
+          data && typeof data === "object" && "detail" in data
+            ? (data as Record<string, unknown>).detail
+            : null;
+        alert(typeof detail === "string" ? detail : "게시 실패");
+        return;
+      }
+      setSessionId(null);
+      setFlow(null);
+      setPhase("draft");
+      const id =
+        data && typeof data === "object" && "id" in data
+          ? (data as Record<string, unknown>).id
+          : null;
+      if (typeof id === "number") router.push(`/posts/${id}`);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
   return (
-    <main className="mx-auto w-full max-w-3xl text-zinc-900 dark:text-sky-100">
+    <main className="mx-auto w-full max-w-full px-3 text-zinc-900 sm:max-w-xl sm:px-4 md:max-w-2xl md:px-5 lg:max-w-3xl lg:px-6 xl:max-w-4xl xl:px-8 2xl:max-w-4xl 2xl:px-10 dark:text-sky-100">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">
           AI와 함께 고민하기
         </h1>
         <div className="flex items-center gap-3 text-sm">
-          <Link href="/write" className="text-zinc-700 hover:underline dark:text-sky-300/85">
-            ← 투표만 받기
-          </Link>
           <Link href="/" className="text-zinc-600 hover:underline dark:text-sky-300/85">
             목록
           </Link>
         </div>
       </div>
 
-      <div className="rounded-xl border border-sky-200 bg-sky-50/90 p-4 text-sm text-sky-950 dark:border-[#223141] dark:bg-[#1B2733] dark:text-white">
-        <p className="font-medium">이 경로로 쓴 글에서만 AI가 질문을 이어 가며 추천을 도와줘요.</p>
-        <p className="mt-1 text-sky-900/90 dark:text-[#AFC6D8]">
-          커뮤니티의 의견은 아래 선택지 <strong>투표</strong>로 받을 수 있어요. 투표와 AI 추천은 서로 다른 방식이에요.
-        </p>
-      </div>
-
-      <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">
-        <p className="text-sm font-semibold text-zinc-900 dark:text-white">AI 대화 스타일</p>
-        <div className="mt-3 space-y-3">
-          <label
-            className={`flex cursor-pointer gap-3 rounded-lg border p-3 hover:bg-zinc-50 dark:hover:bg-sky-950/35 ${
-              aiMode === "simple"
-                ? "border-sky-300 bg-sky-50/80 dark:border-sky-700/60 dark:bg-sky-500/10"
-                : "border-zinc-200 dark:border-[#223141]"
-            }`}
+      {phase === "draft" ? (
+        <div
+          className="mb-4 flex flex-wrap gap-2 rounded-xl border border-zinc-200 bg-zinc-100/80 p-1.5 dark:border-[#223141] dark:bg-zinc-900/50"
+          role="tablist"
+          aria-label="글쓰기 방식"
+        >
+          <span
+            className="inline-flex min-h-10 flex-1 items-center justify-center rounded-lg bg-white px-3 text-center text-sm font-semibold text-indigo-900 shadow-sm dark:bg-[#1B2733] dark:text-indigo-100"
+            aria-current="page"
           >
-            <input
-              type="radio"
-              name="ai-mode"
-              checked={aiMode === "simple"}
-              onChange={() => setAiMode("simple")}
-              className="mt-0.5"
-            />
-            <span>
-              <span className="font-semibold text-zinc-900 dark:text-white">간단</span>
-              <span className="mt-0.5 block text-xs text-zinc-700 dark:text-[#AFC6D8]">
-                질문 3번 후 짧은 추천·이유 (지금까지와 비슷한 분량)
-              </span>
-            </span>
-          </label>
-          <label
-            className={`flex cursor-pointer gap-3 rounded-lg border p-3 hover:bg-zinc-50 dark:hover:bg-sky-950/35 ${
-              aiMode === "detailed"
-                ? "border-sky-300 bg-sky-50/80 dark:border-sky-700/60 dark:bg-sky-500/10"
-                : "border-zinc-200 dark:border-[#223141]"
-            }`}
+            AI와 대화
+          </span>
+          <button
+            type="button"
+            onClick={() => tryNavigateToWrite(router, "/write")}
+            className="inline-flex min-h-10 flex-1 cursor-pointer items-center justify-center rounded-lg px-3 text-center text-sm font-medium text-zinc-700 transition hover:bg-white/90 hover:text-zinc-900 dark:text-[#AFC6D8] dark:hover:bg-[#16202A] dark:hover:text-white"
           >
-            <input
-              type="radio"
-              name="ai-mode"
-              checked={aiMode === "detailed"}
-              onChange={() => setAiMode("detailed")}
-              className="mt-0.5"
-            />
-            <span>
-              <span className="font-semibold text-zinc-900 dark:text-white">상세 비교</span>
-              <span className="mt-0.5 block text-xs text-zinc-700 dark:text-[#AFC6D8]">
-                질문 5번 후, 각 선택지마다 장단점·상황별 비교가 길게 붙는 추천
-              </span>
-            </span>
-          </label>
+            AI 없이 · 투표만
+          </button>
         </div>
+      ) : null}
+
+      {phase === "chat" && flow && flow.type === "question" ? (
+        <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-[#223141] dark:bg-[#16202A] sm:p-5 md:p-6 lg:p-7 xl:p-8">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold text-zinc-500 dark:text-[#AFC6D8]/80">
+                AI 대화
+              </p>
+              <p className="mt-1 text-base font-semibold leading-snug text-zinc-900 dark:text-white">
+                Q{flow.step}. {flow.question}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPhase("draft")}
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-[#223141] dark:bg-[#16202A] dark:text-[#AFC6D8] dark:hover:bg-sky-950/35"
+            >
+              입력으로 돌아가기
+            </button>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50/70 p-4 text-sm text-zinc-800 dark:border-[#223141] dark:bg-[#1B2733] dark:text-[#AFC6D8]">
+            <p className="text-xs font-semibold text-zinc-500 dark:text-[#AFC6D8]/70">
+              지금까지 대화
+            </p>
+            <ol className="mt-3 list-none space-y-2 p-0">
+              {(flow.transcript ?? []).map((t) => (
+                <li key={t.step} className="space-y-1">
+                  <p className="text-sm font-semibold text-zinc-900 dark:text-white">
+                    Q{t.step}. {t.question}
+                  </p>
+                  {t.answer ? (
+                    <p className="text-sm text-zinc-700 dark:text-[#AFC6D8]">
+                      A{t.step}. {t.answer}
+                    </p>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            <p className="text-sm text-zinc-600 dark:text-[#94a3b8]">
+              넘기기·바로 추천만 받기도 할 수 있어요.
+            </p>
+            <label className="block text-sm font-medium text-zinc-800 dark:text-white">
+              답변
+              <textarea
+                value={answerDraft}
+                onChange={(e) => setAnswerDraft(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
+                style={{ minHeight: 96 }}
+              />
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleNext("answer")}
+                disabled={chatLoading || !answerDraft.trim()}
+                className="rounded-lg bg-sky-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-sky-900/20 hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-500 dark:hover:bg-sky-400"
+              >
+                {chatLoading ? "처리 중..." : "다음"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleNext("skip_question")}
+                disabled={chatLoading}
+                className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#223141] dark:bg-[#1B2733] dark:text-[#cbd5e1] dark:hover:bg-sky-950/35"
+              >
+                이 질문 넘기기
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleNext("finish_here")}
+                disabled={chatLoading}
+                className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/60"
+              >
+                여기서 끝내고 추천만
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {phase === "preview" && flow && flow.type === "result" ? (
+        <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-[#223141] dark:bg-[#16202A] sm:p-5 md:p-6 lg:p-7 xl:p-8">
+          <p className="text-xs font-semibold text-zinc-500 dark:text-[#AFC6D8]/80">
+            AI 결과 확인
+          </p>
+          <h2 className="mt-1 text-xl font-semibold text-zinc-900 dark:text-white">
+            추천: {flow.recommended}
+          </h2>
+          <div className="mt-4">
+            <AiReasonDisplay text={flow.reason} />
+          </div>
+
+          <div className="mt-6 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPhase("chat")}
+              className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-[#223141] dark:bg-[#16202A] dark:text-[#AFC6D8] dark:hover:bg-sky-950/35"
+            >
+              답변 계속 수정
+            </button>
+            <button
+              type="button"
+              onClick={() => void handlePublish()}
+              disabled={chatLoading}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-indigo-500/90 dark:hover:bg-indigo-400/90"
+            >
+              {chatLoading ? "게시 중..." : "게시하기"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {phase === "draft" ? (
+      <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-[#223141] dark:bg-[#16202A] sm:p-5 md:p-6 lg:p-7">
+        <p className="text-sm font-semibold text-zinc-900 dark:text-white">대화 스타일</p>
+        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {AI_STYLE_OPTIONS.map((opt) => {
+            const selected = aiMode === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => {
+                  setAiMode(opt.id);
+                  setAiQuestionSteps(opt.defaultSteps);
+                }}
+                className={[
+                  "rounded-xl border p-3 text-left transition",
+                  selected
+                    ? "border-indigo-400 bg-indigo-50/90 ring-2 ring-indigo-300/50 dark:border-indigo-600/70 dark:bg-indigo-950/35 dark:ring-indigo-500/30"
+                    : "border-zinc-200 hover:bg-zinc-50 dark:border-[#223141] dark:hover:bg-sky-950/30",
+                ].join(" ")}
+              >
+                <div className="flex items-start gap-2">
+                  <span className="text-xl" aria-hidden>
+                    {opt.emoji}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-zinc-900 dark:text-white">
+                      {opt.title}
+                    </p>
+                    {selected ? (
+                      <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-[11px] leading-snug text-zinc-600 dark:text-[#AFC6D8]/95">
+                        {opt.lines.map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {aiMode !== "random_fun" ? (
+          <>
+            <p className="mt-5 text-sm font-semibold text-zinc-900 dark:text-white">
+              질문 횟수
+            </p>
+            <label className="mt-2 block text-sm font-medium text-zinc-800 dark:text-white">
+              <select
+                value={aiQuestionSteps}
+                onChange={(e) => setAiQuestionSteps(Number(e.target.value))}
+                className="mt-1 w-full max-w-xs rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
+              >
+                {Array.from({ length: 8 }, (_, i) => i + 3).map((n) => (
+                  <option key={n} value={n}>
+                    {n}회
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : (
+          <p className="mt-5 text-xs text-zinc-600 dark:text-[#AFC6D8]/90">
+            질문 없이 선택지 하나를 무작위로 고르고, 그 항목만 짧게 이유를 적어요.
+          </p>
+        )}
       </div>
+      ) : null}
 
-      <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">
-        <p className="text-sm text-zinc-700 dark:text-[#AFC6D8]">
-          {!hasToken
-            ? "글 작성은 로그인 후 이용할 수 있어요."
-            : "등록 후 상세 페이지에서 AI 질문을 시작할 수 있어요. 카테고리는 아래에서 직접 고르세요."}
-        </p>
+      {phase === "draft" ? (
+      <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-[#223141] dark:bg-[#16202A] sm:p-5 md:p-6 lg:p-7 xl:p-8">
+        {!hasToken ? (
+          <p className="text-sm text-zinc-700 dark:text-[#AFC6D8]">
+            글 작성은 로그인 후 이용할 수 있어요.
+          </p>
+        ) : null}
 
-        <div className="mt-5 space-y-4">
-          <CategorySelect
-            categories={categories}
-            value={category}
-            onChange={setCategory}
-          />
+        <div className={`space-y-4 ${hasToken ? "" : "mt-4"}`}>
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50/90 px-3 py-2.5 dark:border-[#223141] dark:bg-zinc-900/50">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0 text-sm">
+                <span className="font-semibold text-zinc-800 dark:text-white">
+                  카테고리
+                </span>
+                {categoryPickerMode === "auto" ? (
+                  <span className="ml-2 text-zinc-700 dark:text-[#AFC6D8]">
+                    {category || "…"}
+                    {categoryAutoLoading ? " · 맞추는 중" : ""}
+                  </span>
+                ) : null}
+              </div>
+              {categoryPickerMode === "auto" ? (
+                <button
+                  type="button"
+                  onClick={() => setCategoryPickerMode("manual")}
+                  className="shrink-0 rounded-md border border-zinc-300 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-[#223141] dark:bg-[#16202A] dark:text-[#AFC6D8] dark:hover:bg-sky-950/35"
+                >
+                  직접
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setCategoryPickerMode("auto")}
+                  className="shrink-0 rounded-md border border-sky-300 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-900 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-100 dark:hover:bg-sky-950/80"
+                >
+                  자동
+                </button>
+              )}
+            </div>
+            {categoryPickerMode === "manual" ? (
+              <div className="mt-2">
+                <CategorySelect
+                  categories={categories}
+                  value={category}
+                  onChange={setCategory}
+                />
+              </div>
+            ) : null}
+          </div>
 
           <label className="block text-sm font-medium text-zinc-800 dark:text-white">
             제목
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="제목"
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
+              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
             />
           </label>
 
-          <div className="rounded-xl border border-sky-200/70 bg-sky-50/70 p-4 shadow-sm shadow-sky-900/5 dark:border-[#223141] dark:bg-[#1B2733]">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-sky-950 dark:text-white">
-                비슷한 고민이 이미 있을지도 몰라요
-              </p>
-              {similarDraftLoading ? (
-                <span className="text-xs text-sky-700/80 dark:text-[#AFC6D8]">
-                  찾는 중…
-                </span>
-              ) : null}
-            </div>
-            {similarDraft.length === 0 ? (
-              <p className="mt-1 text-sm text-sky-900/70 dark:text-[#AFC6D8]/85">
-                제목을 2자 이상 입력하면 비슷한 글을 보여줘요.
-              </p>
-            ) : (
-              <ul className="mt-3 list-none space-y-2 p-0">
+          {similarDraft.length > 0 ? (
+            <div className="rounded-xl border border-sky-200/70 bg-sky-50/70 p-3 shadow-sm shadow-sky-900/5 dark:border-[#223141] dark:bg-[#1B2733]">
+              <ul className="list-none space-y-2 p-0">
                 {similarDraft.map((p) => (
                   <li key={p.id}>
                     <Link
@@ -396,19 +811,38 @@ export default function WriteAIPage() {
                   </li>
                 ))}
               </ul>
-            )}
-          </div>
+            </div>
+          ) : null}
 
           <label className="block text-sm font-medium text-zinc-800 dark:text-white">
             고민 내용
-            <textarea
-              ref={contentRef}
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              placeholder="고민 내용"
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
-              style={{ minHeight: 160 }}
-            />
+            <div className="mt-2">
+              <RichComposer
+                ref={composerRef}
+                value={composerHtml}
+                onChange={setComposerHtml}
+                onPasteImage={async (file) => {
+                  const token = getStoredToken();
+                  if (!token) {
+                    router.push("/login");
+                    throw new Error("no token");
+                  }
+                  const fd = new FormData();
+                  fd.append("file", file);
+                  const res = await fetch(`${API_BASE_URL}/upload/image`, {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${token}` },
+                    body: fd,
+                  });
+                  const data = await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    alert(typeof data.detail === "string" ? data.detail : "업로드 실패");
+                    throw new Error("upload failed");
+                  }
+                  return typeof data.url === "string" ? data.url : "";
+                }}
+              />
+            </div>
           </label>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -424,12 +858,12 @@ export default function WriteAIPage() {
             </label>
           </div>
 
-          <label className="block text-sm font-medium text-zinc-700">
+          <label className="block text-sm font-medium text-zinc-700 dark:text-white">
             태그 (쉼표로 구분)
             <input
               value={tagsText}
               onChange={(e) => setTagsText(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
+              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
             />
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <span className="text-xs text-zinc-600 dark:text-[#AFC6D8]/80">
@@ -464,20 +898,12 @@ export default function WriteAIPage() {
             onChange={setOption}
             onAdd={addOption}
             onRemove={removeOption}
+            aiSuggest={{
+              onClick: () => void handleSuggestDraft(),
+              loading: draftSuggestLoading,
+              notice: draftSuggestNotice || undefined,
+            }}
           />
-
-          <label className="block text-sm font-medium text-zinc-800 dark:text-white">
-            투표 마감 (선택)
-            <input
-              type="datetime-local"
-              value={voteDeadlineLocal}
-              onChange={(e) => setVoteDeadlineLocal(e.target.value)}
-              className="mt-1 w-full max-w-md rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
-            />
-            <span className="mt-1 block text-xs font-normal text-zinc-600 dark:text-[#AFC6D8]/80">
-              커뮤니티 투표에만 적용됩니다. 비워 두면 마감 없음.
-            </span>
-          </label>
 
           <div className="pt-2">
             <button
@@ -486,11 +912,18 @@ export default function WriteAIPage() {
               disabled={submitting || categories.length === 0}
               className="rounded-lg bg-sky-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-sky-900/20 hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-500 dark:hover:bg-sky-400"
             >
-              {submitting ? "등록 중..." : "등록하고 AI 시작할 글 만들기"}
+              {submitting
+                ? aiMode === "random_fun"
+                  ? "뽑는 중..."
+                  : "AI 시작 중..."
+                : aiMode === "random_fun"
+                  ? "무작위로 정하기"
+                  : "AI 대화 시작"}
             </button>
           </div>
         </div>
       </div>
+      ) : null}
     </main>
   );
 }

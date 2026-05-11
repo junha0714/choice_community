@@ -9,8 +9,8 @@ export function tryNavigateToWrite(router: AppRouter, path: "/write" | "/write/a
   if (!getStoredToken()) {
     const kind =
       path === "/write"
-        ? "투표 고민 글을 등록하려면 먼저 로그인해 주세요."
-        : "AI 고민 글을 등록하려면 먼저 로그인해 주세요.";
+        ? "AI 없이 투표 글을 올리려면 먼저 로그인해 주세요."
+        : "글쓰기를 이용하려면 먼저 로그인해 주세요.";
     alert(`${kind}\n계정이 없으면 회원가입 후 로그인해 주세요.`);
     router.push("/login");
     return;

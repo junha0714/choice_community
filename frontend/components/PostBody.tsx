@@ -18,13 +18,21 @@ export function PostBody({ content }: { content: string }) {
         const m = part.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
         if (m) {
           const src = resolveImageSrc(m[2]);
+          const altRaw = m[1] || "";
+          const alt = altRaw.replace(/\|w=\d+\s*$/i, "").trim();
+          const widthMatch = altRaw.match(/\|w=(\d{2,4})\s*$/i);
+          const width =
+            widthMatch && widthMatch[1]
+              ? Math.max(120, Math.min(960, Number(widthMatch[1]) || 0))
+              : null;
           return (
             <img
               key={i}
               src={src}
-              alt={m[1] || ""}
+              alt={alt}
               className="my-3 block max-h-[min(480px,80vh)] max-w-full rounded-lg border border-zinc-100 object-contain"
               loading="lazy"
+              style={width ? { maxWidth: width } : undefined}
             />
           );
         }

@@ -84,7 +84,7 @@ function splitByH2(md: string): { title: string; body: string }[] {
   }
   if (current) sections.push(current);
   const out = sections.map((s) => ({
-    title: s.title || "상세 비교",
+    title: s.title || "선택지 비교",
     body: s.body.join("\n").trim(),
   }));
   return out.filter((s) => s.title || s.body);
@@ -192,7 +192,7 @@ export function AiReasonDisplay({ text }: Props) {
         </div>
       ) : comparison ? (
         <div className="rounded-xl border border-indigo-100 bg-white p-4 shadow-sm">
-          <p className="text-xs font-semibold text-indigo-900/80">상세</p>
+          <p className="text-xs font-semibold text-indigo-900/80">비교</p>
           <div className="mt-2">
             <BodyLines body={comparison} />
           </div>

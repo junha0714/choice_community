@@ -77,3 +77,15 @@ def run_schema_migrations() -> None:
         "ALTER TABLE posts ADD COLUMN ai_transcript_public BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE posts ADD COLUMN ai_transcript_public INTEGER NOT NULL DEFAULT 0",
     )
+    _add_column_if_missing(
+        "posts",
+        "ai_question_steps",
+        "ALTER TABLE posts ADD COLUMN ai_question_steps INTEGER",
+        "ALTER TABLE posts ADD COLUMN ai_question_steps INTEGER",
+    )
+    _add_column_if_missing(
+        "ai_sessions",
+        "ai_question_steps",
+        "ALTER TABLE ai_sessions ADD COLUMN ai_question_steps INTEGER",
+        "ALTER TABLE ai_sessions ADD COLUMN ai_question_steps INTEGER",
+    )

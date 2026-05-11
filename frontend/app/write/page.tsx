@@ -8,6 +8,13 @@ import { getStoredToken } from "@/lib/auth-storage";
 import { jsonAuthHeaders } from "@/lib/auth-headers";
 import { OptionInputs } from "@/components/OptionInputs";
 import { CategorySelect } from "@/components/CategorySelect";
+import {
+  RichComposer,
+  type RichComposerHandle,
+  richHtmlToMarkdown,
+  richHtmlToPlainText,
+} from "@/components/RichComposer";
+import { tryNavigateToWrite } from "@/lib/require-login-for-write";
 
 type SimilarDraftPost = {
   id: number;
@@ -23,7 +30,8 @@ type SimilarDraftPost = {
 export default function WritePage() {
   const router = useRouter();
   const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
+  const [composerHtml, setComposerHtml] = useState("");
+  const composerRef = useRef<RichComposerHandle | null>(null);
   const [category, setCategory] = useState("");
   const [categories, setCategories] = useState<string[]>([]);
   const [options, setOptions] = useState(["", ""]);
@@ -32,11 +40,14 @@ export default function WritePage() {
   const [tagsText, setTagsText] = useState("");
   const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
   const [tagSuggestLoading, setTagSuggestLoading] = useState(false);
-  const [voteDeadlineLocal, setVoteDeadlineLocal] = useState("");
   const [uploadingImage, setUploadingImage] = useState(false);
-  const contentRef = useRef<HTMLTextAreaElement>(null);
   const [similarDraft, setSimilarDraft] = useState<SimilarDraftPost[]>([]);
-  const [similarDraftLoading, setSimilarDraftLoading] = useState(false);
+  const [draftSuggestLoading, setDraftSuggestLoading] = useState(false);
+  const [draftSuggestNotice, setDraftSuggestNotice] = useState("");
+  const [categoryPickerMode, setCategoryPickerMode] = useState<"auto" | "manual">(
+    "auto"
+  );
+  const [categoryAutoLoading, setCategoryAutoLoading] = useState(false);
 
   useEffect(() => {
     setHasToken(!!getStoredToken());
@@ -48,19 +59,53 @@ export default function WritePage() {
       .then((d) => {
         const list: string[] = d?.categories ?? [];
         setCategories(list);
-        setCategory((prev) => prev || list[0] || "");
+        setCategory((prev) => prev || (list.includes("기타") ? "기타" : list[0] || ""));
       })
       .catch(() => {});
   }, []);
 
   useEffect(() => {
+    if (categoryPickerMode !== "auto" || categories.length === 0) return;
+    const t = title.trim();
+    const c = richHtmlToMarkdown(composerHtml).trim();
+    if (t.length + c.length < 10) {
+      setCategoryAutoLoading(false);
+      return;
+    }
+    setCategoryAutoLoading(true);
+    let cancelled = false;
+    const id = window.setTimeout(() => {
+      void fetch(`${API_BASE_URL}/meta/suggest-category`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: t, content: c }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (cancelled || !d) return;
+          const cat = (d as { category?: string }).category;
+          if (typeof cat === "string" && categories.includes(cat)) {
+            setCategory(cat);
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) setCategoryAutoLoading(false);
+        });
+    }, 650);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(id);
+      setCategoryAutoLoading(false);
+    };
+  }, [title, composerHtml, categoryPickerMode, categories]);
+
+  useEffect(() => {
     const q = title.trim();
     if (q.length < 2) {
       setSimilarDraft([]);
-      setSimilarDraftLoading(false);
       return;
     }
-    setSimilarDraftLoading(true);
     const id = window.setTimeout(() => {
       const token = getStoredToken();
       const headers: HeadersInit = {};
@@ -74,8 +119,7 @@ export default function WritePage() {
           const items = (d && Array.isArray(d.items) ? d.items : []) as SimilarDraftPost[];
           setSimilarDraft(items);
         })
-        .catch(() => setSimilarDraft([]))
-        .finally(() => setSimilarDraftLoading(false));
+        .catch(() => setSimilarDraft([]));
     }, 450);
     return () => window.clearTimeout(id);
   }, [title]);
@@ -88,7 +132,7 @@ export default function WritePage() {
 
   useEffect(() => {
     const t = title.trim();
-    const c = content.trim();
+    const c = richHtmlToPlainText(composerHtml);
     const selected = parseTagsText(tagsText);
     if (t.length + c.length < 8) {
       setTagSuggestions([]);
@@ -118,7 +162,7 @@ export default function WritePage() {
         .finally(() => setTagSuggestLoading(false));
     }, 550);
     return () => window.clearTimeout(id);
-  }, [title, content, category, tagsText]);
+  }, [title, composerHtml, category, tagsText]);
 
   const toggleTagFromSuggestion = (tag: string) => {
     const t = tag.trim().toLowerCase();
@@ -131,6 +175,7 @@ export default function WritePage() {
   };
 
   const setOption = (index: number, value: string) => {
+    setDraftSuggestNotice("");
     const next = [...options];
     next[index] = value;
     setOptions(next);
@@ -144,27 +189,6 @@ export default function WritePage() {
   const removeOption = (index: number) => {
     if (options.length <= 2) return;
     setOptions(options.filter((_, j) => j !== index));
-  };
-
-  const insertIntoContent = (snippet: string) => {
-    const el = contentRef.current;
-    if (!el) {
-      setContent((c) => (c ? `${c}\n\n${snippet}` : snippet));
-      return;
-    }
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    const before = content.slice(0, start);
-    const after = content.slice(end);
-    const sep = before && !before.endsWith("\n") ? "\n\n" : "";
-    const ins = sep + snippet;
-    const next = before + ins + after;
-    setContent(next);
-    requestAnimationFrame(() => {
-      el.focus();
-      const pos = start + ins.length;
-      el.setSelectionRange(pos, pos);
-    });
   };
 
   const handleImagePick = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -191,9 +215,53 @@ export default function WritePage() {
         return;
       }
       const url = typeof data.url === "string" ? data.url : "";
-      if (url) insertIntoContent(`![img](${url})`);
+      if (url) {
+        const h = composerRef.current;
+        if (h) h.insertImageAtCursor(url);
+      }
     } finally {
       setUploadingImage(false);
+    }
+  };
+
+  const handleSuggestDraft = async () => {
+    const finalContent = richHtmlToMarkdown(composerHtml);
+    const t = title.trim();
+    const c = finalContent.trim();
+    if (t.length + c.length < 10) {
+      alert("제목과 본문을 조금 더 써 주면 자동 제안이 잘 나와요.");
+      return;
+    }
+    setDraftSuggestLoading(true);
+    setDraftSuggestNotice("");
+    try {
+      const res = await fetch(`${API_BASE_URL}/meta/suggest-options-category`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: t, content: c }),
+      });
+      const d = (await res.json().catch(() => null)) as {
+        options?: string[];
+        category?: string;
+        disclaimer?: string;
+      } | null;
+      if (!res.ok || !d) {
+        alert("자동 제안을 불러오지 못했어요.");
+        return;
+      }
+      const opts = Array.isArray(d.options)
+        ? d.options.map((x) => String(x).trim()).filter(Boolean)
+        : [];
+      if (opts.length < 2) {
+        alert("선택지를 자동으로 만들기 어려워요. 제목·본문을 조금 더 적어 보세요.");
+        return;
+      }
+      setOptions(opts.slice(0, 6));
+      if (typeof d.disclaimer === "string" && d.disclaimer.trim()) {
+        setDraftSuggestNotice(d.disclaimer.trim());
+      }
+    } finally {
+      setDraftSuggestLoading(false);
     }
   };
 
@@ -203,12 +271,13 @@ export default function WritePage() {
       router.push("/login");
       return;
     }
-    if (!title.trim() || !content.trim()) {
+    const finalContent = richHtmlToMarkdown(composerHtml);
+    if (!title.trim() || !finalContent.trim()) {
       alert("제목과 고민 내용을 입력해줘");
       return;
     }
     if (!category) {
-      alert("카테고리를 선택해줘");
+      alert("카테고리를 불러오는 중이거나 비어 있어요. 잠시 후 다시 시도해줘.");
       return;
     }
     const optionList = options.map((o) => o.trim()).filter(Boolean);
@@ -225,14 +294,11 @@ export default function WritePage() {
         headers: jsonAuthHeaders(),
         body: JSON.stringify({
           title: title.trim(),
-          content: content.trim(),
+          content: finalContent,
           category,
           options: optionList,
           post_kind: "community",
           tags: tags.length ? tags : undefined,
-          vote_deadline_at: voteDeadlineLocal
-            ? new Date(voteDeadlineLocal).toISOString()
-            : undefined,
         }),
       });
 
@@ -262,63 +328,98 @@ export default function WritePage() {
   };
 
   return (
-    <main className="mx-auto w-full max-w-3xl text-zinc-900 dark:text-sky-100">
+    <main className="mx-auto w-full max-w-full px-3 text-zinc-900 sm:max-w-xl sm:px-4 md:max-w-2xl md:px-5 lg:max-w-3xl lg:px-6 xl:max-w-4xl xl:px-8 2xl:max-w-4xl 2xl:px-10 dark:text-sky-100">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">커뮤니티 투표 고민</h1>
         <div className="flex items-center gap-3 text-sm">
-          <Link
-            href="/write/ai"
-            className="text-sky-700 hover:underline dark:text-sky-300"
-          >
-            AI와 고민하기 →
-          </Link>
           <Link href="/" className="text-zinc-600 hover:underline dark:text-sky-300/80">
             ← 목록
           </Link>
         </div>
       </div>
 
-      <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">
-        <p className="text-sm text-zinc-700 dark:text-[#AFC6D8]">
-        {!hasToken
-          ? "글 작성은 로그인 후 이용할 수 있어요."
-          : "다른 사람들이 선택지에 투표하고 댓글로 반응해요. 카테고리는 아래에서 직접 고르세요."}
-        </p>
+      <div
+        className="mb-4 flex flex-wrap gap-2 rounded-xl border border-zinc-200 bg-zinc-100/80 p-1.5 dark:border-[#223141] dark:bg-zinc-900/50"
+        role="tablist"
+        aria-label="글쓰기 방식"
+      >
+        <button
+          type="button"
+          onClick={() => tryNavigateToWrite(router, "/write/ai")}
+          className="inline-flex min-h-10 flex-1 cursor-pointer items-center justify-center rounded-lg px-3 text-center text-sm font-medium text-zinc-700 transition hover:bg-white/90 hover:text-zinc-900 dark:text-[#AFC6D8] dark:hover:bg-[#16202A] dark:hover:text-white"
+        >
+          AI와 대화
+        </button>
+        <span
+          className="inline-flex min-h-10 flex-1 items-center justify-center rounded-lg bg-white px-3 text-center text-sm font-semibold text-sky-900 shadow-sm dark:bg-[#1B2733] dark:text-sky-100"
+          aria-current="page"
+        >
+          AI 없이 · 투표만
+        </span>
+      </div>
 
-        <div className="mt-5 space-y-4">
-          <CategorySelect
-            categories={categories}
-            value={category}
-            onChange={setCategory}
-          />
+      <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-[#223141] dark:bg-[#16202A] sm:p-5 md:p-6 lg:p-7 xl:p-8">
+        {!hasToken ? (
+          <p className="text-sm text-zinc-700 dark:text-[#AFC6D8]">
+            글 작성은 로그인 후 이용할 수 있어요.
+          </p>
+        ) : null}
+
+        <div className={`space-y-4 ${hasToken ? "" : "mt-4"}`}>
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50/90 px-3 py-2.5 dark:border-[#223141] dark:bg-zinc-900/50">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0 text-sm">
+                <span className="font-semibold text-zinc-800 dark:text-white">
+                  카테고리
+                </span>
+                {categoryPickerMode === "auto" ? (
+                  <span className="ml-2 text-zinc-700 dark:text-[#AFC6D8]">
+                    {category || "…"}
+                    {categoryAutoLoading ? " · 맞추는 중" : ""}
+                  </span>
+                ) : null}
+              </div>
+              {categoryPickerMode === "auto" ? (
+                <button
+                  type="button"
+                  onClick={() => setCategoryPickerMode("manual")}
+                  className="shrink-0 rounded-md border border-zinc-300 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-[#223141] dark:bg-[#16202A] dark:text-[#AFC6D8] dark:hover:bg-sky-950/35"
+                >
+                  직접
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setCategoryPickerMode("auto")}
+                  className="shrink-0 rounded-md border border-sky-300 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-900 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-100 dark:hover:bg-sky-950/80"
+                >
+                  자동
+                </button>
+              )}
+            </div>
+            {categoryPickerMode === "manual" ? (
+              <div className="mt-2">
+                <CategorySelect
+                  categories={categories}
+                  value={category}
+                  onChange={setCategory}
+                />
+              </div>
+            ) : null}
+          </div>
 
           <label className="block text-sm font-medium text-zinc-800 dark:text-white">
             제목
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="제목"
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
+              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
             />
           </label>
 
-          <div className="rounded-xl border border-sky-200/70 bg-sky-50/70 p-4 shadow-sm shadow-sky-900/5 dark:border-[#223141] dark:bg-[#1B2733]">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-sky-950 dark:text-white">
-                비슷한 고민이 이미 있을지도 몰라요
-              </p>
-              {similarDraftLoading ? (
-                <span className="text-xs text-sky-700/80 dark:text-[#AFC6D8]">
-                  찾는 중…
-                </span>
-              ) : null}
-            </div>
-            {similarDraft.length === 0 ? (
-              <p className="mt-1 text-sm text-sky-900/70 dark:text-[#AFC6D8]/85">
-                제목을 2자 이상 입력하면 비슷한 글을 보여줘요.
-              </p>
-            ) : (
-              <ul className="mt-3 list-none space-y-2 p-0">
+          {similarDraft.length > 0 ? (
+            <div className="rounded-xl border border-sky-200/70 bg-sky-50/70 p-3 shadow-sm shadow-sky-900/5 dark:border-[#223141] dark:bg-[#1B2733]">
+              <ul className="list-none space-y-2 p-0">
                 {similarDraft.map((p) => (
                   <li key={p.id}>
                     <Link
@@ -340,23 +441,45 @@ export default function WritePage() {
                   </li>
                 ))}
               </ul>
-            )}
-          </div>
+            </div>
+          ) : null}
 
           <label className="block text-sm font-medium text-zinc-800 dark:text-white">
             고민 내용
-            <textarea
-              ref={contentRef}
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              placeholder="고민 내용 (이미지는 아래에서 업로드하면 본문에 삽입됩니다)"
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
-              style={{ minHeight: 160 }}
-            />
+            <div className="mt-2">
+              <RichComposer
+                ref={composerRef}
+                value={composerHtml}
+                onChange={setComposerHtml}
+                onPasteImage={async (file) => {
+                  const token = getStoredToken();
+                  if (!token) {
+                    router.push("/login");
+                    throw new Error("no token");
+                  }
+                  const fd = new FormData();
+                  fd.append("file", file);
+                  const res = await fetch(`${API_BASE_URL}/upload/image`, {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${token}` },
+                    body: fd,
+                  });
+                  const data = await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    alert(typeof data.detail === "string" ? data.detail : "업로드 실패");
+                    throw new Error("upload failed");
+                  }
+                  return typeof data.url === "string" ? data.url : "";
+                }}
+              />
+            </div>
           </label>
 
           <div className="flex flex-wrap items-center gap-2">
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 hover:bg-zinc-100 dark:border-[#223141] dark:bg-[#1B2733] dark:text-[#AFC6D8] dark:hover:bg-sky-950/35">
+            <label
+              className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 hover:bg-zinc-100 dark:border-[#223141] dark:bg-[#1B2733] dark:text-[#AFC6D8] dark:hover:bg-sky-950/35"
+              title="jpg·png·gif·webp, 최대 5MB"
+            >
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/gif,image/webp"
@@ -366,9 +489,6 @@ export default function WritePage() {
               />
               {uploadingImage ? "업로드 중…" : "본문에 사진 넣기"}
             </label>
-            <span className="text-xs text-zinc-600 dark:text-[#AFC6D8]/80">
-              jpg·png·gif·webp, 최대 5MB
-            </span>
           </div>
 
           <label className="block text-sm font-medium text-zinc-800 dark:text-white">
@@ -376,8 +496,7 @@ export default function WritePage() {
             <input
               value={tagsText}
               onChange={(e) => setTagsText(e.target.value)}
-              placeholder="예: 연애, 직장"
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
+              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
             />
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <span className="text-xs text-zinc-600 dark:text-[#AFC6D8]/80">
@@ -412,21 +531,12 @@ export default function WritePage() {
             onChange={setOption}
             onAdd={addOption}
             onRemove={removeOption}
+            aiSuggest={{
+              onClick: () => void handleSuggestDraft(),
+              loading: draftSuggestLoading,
+              notice: draftSuggestNotice || undefined,
+            }}
           />
-
-          <label className="block text-sm font-medium text-zinc-800 dark:text-white">
-            투표 마감 (선택)
-            <input
-              type="datetime-local"
-              value={voteDeadlineLocal}
-              onChange={(e) => setVoteDeadlineLocal(e.target.value)}
-              className="mt-1 w-full max-w-md rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
-            />
-            <span className="mt-1 block text-xs font-normal text-zinc-600 dark:text-[#AFC6D8]/80">
-              비워 두면 마감 없이 계속 투표할 수 있어요. 이 기기에서 보이는 로컬 시각으로
-              저장됩니다.
-            </span>
-          </label>
 
           <div className="pt-2">
             <button

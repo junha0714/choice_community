@@ -14,8 +14,11 @@ function getJwtExpMs(token: string): number | null {
     const payloadJson = decodeBase64Url(parts[1]);
     const payload = JSON.parse(payloadJson) as unknown;
     const exp =
-      typeof payload === "object" && payload != null && "exp" in payload
-        ? (payload as any).exp
+      typeof payload === "object" &&
+      payload != null &&
+      "exp" in payload &&
+      typeof (payload as Record<string, unknown>).exp === "number"
+        ? (payload as Record<string, unknown>).exp
         : null;
     if (typeof exp !== "number" || !Number.isFinite(exp)) return null;
     // JWT exp is seconds since epoch

@@ -83,7 +83,7 @@ export default function RootLayout({
           본문으로 건너뛰기
         </a>
         <header className="sticky top-0 z-50 border-b border-sky-200/60 bg-white/80 shadow-sm shadow-sky-900/5 backdrop-blur-md dark:border-sky-900/50 dark:bg-zinc-950/75 dark:shadow-sky-950/20">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
+          <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:gap-4 sm:px-5 md:px-7 lg:max-w-[90rem] lg:px-8 xl:max-w-[100rem] xl:px-10 2xl:max-w-[110rem] 2xl:px-12">
             <Link
               href="/"
               className="group shrink-0 text-lg font-semibold tracking-tight"
@@ -105,7 +105,7 @@ export default function RootLayout({
           tabIndex={-1}
           className="flex flex-1 flex-col outline-none focus:outline-none"
         >
-          <div className="mx-auto w-full flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:py-10">
+          <div className="mx-auto w-full max-w-full flex-1 px-4 py-6 sm:px-5 sm:py-7 md:px-7 md:py-8 lg:px-8 lg:py-9 xl:max-w-[100rem] xl:px-10 xl:py-10 2xl:max-w-[110rem] 2xl:px-12 2xl:py-12">
             <Suspense fallback={<div />}>
               <CommunityShell>{children}</CommunityShell>
             </Suspense>
@@ -113,7 +113,7 @@ export default function RootLayout({
         </div>
 
         <footer className="border-t border-sky-200/60 bg-white/60 backdrop-blur-sm dark:border-sky-900/50 dark:bg-zinc-950/60">
-          <div className="mx-auto max-w-7xl px-4 py-8 text-xs text-zinc-500 dark:text-sky-200/70 sm:px-6">
+          <div className="mx-auto max-w-7xl px-4 py-7 text-xs text-zinc-500 dark:text-sky-200/70 sm:px-5 md:px-7 lg:max-w-[90rem] lg:px-8 xl:max-w-[100rem] xl:px-10 2xl:max-w-[110rem] 2xl:px-12 2xl:py-10">
             © {new Date().getFullYear()} Choice Community
           </div>
         </footer>
