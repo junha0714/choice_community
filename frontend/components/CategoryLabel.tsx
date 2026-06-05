@@ -13,7 +13,7 @@ import {
   UtensilsCrossed,
   type LucideIcon,
 } from "lucide-react";
-import { categoryDisplayName } from "@/lib/categories";
+import { categoryDisplayName, normalizeCategory } from "@/lib/categories";
 
 const CATEGORY_ICONS: Record<string, LucideIcon> = {
   "음식·카페": UtensilsCrossed,
@@ -46,7 +46,7 @@ export function CategoryIcon({
   category: string;
   className?: string;
 }) {
-  const Icon = CATEGORY_ICONS[(category || "").trim()] ?? DEFAULT_ICON;
+  const Icon = CATEGORY_ICONS[normalizeCategory(category)] ?? DEFAULT_ICON;
   return <Icon className={className} aria-hidden strokeWidth={2} />;
 }
 

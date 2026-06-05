@@ -39,6 +39,7 @@ app = FastAPI(title="PickTalk API", description="PickTalk backend")
 _cors_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://picktalk.vercel.app",
     "https://choice-community.vercel.app",
 ]
 _extra = os.getenv("CORS_EXTRA_ORIGINS", "").strip()

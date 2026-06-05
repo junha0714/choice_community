@@ -52,6 +52,16 @@ def normalize_category(category: str | None) -> str:
     return LEGACY_CATEGORY_MAP.get(t, "기타")
 
 
+def category_filter_values(category: str | None) -> list[str]:
+    """DB 필터: canonical + 해당 legacy 별칭."""
+    norm = normalize_category(category)
+    values = {norm}
+    for old, new in LEGACY_CATEGORY_MAP.items():
+        if new == norm:
+            values.add(old)
+    return list(values)
+
+
 def is_notice_category(category: str | None) -> bool:
     return normalize_category(category) == NOTICE_CATEGORY
 

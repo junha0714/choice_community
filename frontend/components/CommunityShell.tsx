@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { API_BASE_URL } from "@/lib/config";
 import { BOARD_CATEGORIES } from "@/lib/board-categories";
+import { CHOICE_CATEGORY_ORDER } from "@/lib/categories";
 import { CategoryLabel } from "@/components/CategoryLabel";
 import {
   BOARD_PATH,
@@ -115,13 +116,37 @@ export function CommunityShell({ children }: { children: ReactNode }) {
     let cancelled = false;
     const load = async () => {
       try {
-        const [c, t] = await Promise.all([
+        const [metaRes, statsRes, trendingRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/meta/categories`),
           fetch(`${API_BASE_URL}/stats/categories`),
           fetch(`${API_BASE_URL}/stats/trending-posts?limit=5`),
         ]);
         if (cancelled) return;
-        if (c.ok) setCategories(await c.json());
-        if (t.ok) setTrending(await t.json());
+
+        let choiceList: string[] = [...CHOICE_CATEGORY_ORDER];
+        if (metaRes.ok) {
+          const meta = (await metaRes.json()) as { choice_categories?: string[] };
+          if (Array.isArray(meta.choice_categories) && meta.choice_categories.length > 0) {
+            choiceList = meta.choice_categories;
+          }
+        }
+
+        const countMap: Record<string, number> = {};
+        if (statsRes.ok) {
+          const stats = (await statsRes.json()) as CategoryStat[];
+          for (const row of stats) {
+            countMap[row.category] = row.count;
+          }
+        }
+
+        setCategories(
+          choiceList.map((category) => ({
+            category,
+            count: countMap[category] ?? 0,
+          }))
+        );
+
+        if (trendingRes.ok) setTrending(await trendingRes.json());
       } catch {
         /* ignore */
       }
@@ -228,12 +253,14 @@ export function CommunityShell({ children }: { children: ReactNode }) {
   );
 
   const mobileNavPill = (
+    key: string,
     href: string,
     label: ReactNode,
     active: boolean,
     muted = false
   ) => (
     <Link
+      key={key}
       href={href}
       className={[
         "rounded-full border px-3 py-1.5 text-xs transition",
@@ -270,12 +297,14 @@ export function CommunityShell({ children }: { children: ReactNode }) {
         <h2 className="text-sm font-semibold text-zinc-800 dark:text-sky-100">게시판</h2>
         <div className="mt-3 flex flex-wrap gap-2">
           {mobileNavPill(
+            "all",
             homeFeedHref("choice"),
             "전체",
             onBoard && feed === "choice" && !activeCategory
           )}
           {choiceRows.map((row) =>
             mobileNavPill(
+              row.category,
               homeFeedHref("choice", { category: row.category }),
               <CategoryLabel category={row.category} />,
               onBoard && feed === "choice" && activeCategory === row.category
@@ -283,6 +312,7 @@ export function CommunityShell({ children }: { children: ReactNode }) {
           )}
           {boardNavItems.map((item) =>
             mobileNavPill(
+              item.feed,
               homeFeedHref(item.feed),
               <CategoryLabel category={item.category} />,
               onBoard && feed === item.feed,

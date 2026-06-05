@@ -12,6 +12,8 @@ from categories import (
     is_board_category,
     is_notice_category,
     is_suggestion_category,
+    category_filter_values,
+    normalize_category,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -129,15 +131,15 @@ def get_posts(
         sort = "latest"
 
     query = _posts_list_query(db, current_user)
-    cat = (category or "").strip()
+    cat = normalize_category(category) if (category or "").strip() else ""
     feed_key = (feed or "").strip().lower()
     if cat == NOTICE_CATEGORY:
         feed_key = "notice"
     elif cat == SUGGESTION_CATEGORY:
         feed_key = "feedback"
-    elif cat:
+    elif cat and cat not in BOARD_CATEGORIES:
         feed_key = "choice"
-        query = query.filter(Post.category == cat)
+        query = query.filter(Post.category.in_(category_filter_values(cat)))
     elif feed_key == "notice":
         query = query.filter(Post.category == NOTICE_CATEGORY)
     elif feed_key == "feedback":

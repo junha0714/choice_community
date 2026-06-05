@@ -1,4 +1,4 @@
-/** 배포 시 `NEXT_PUBLIC_SITE_URL`에 실제 도메인(https://...) 설정 */
+/** 배포 시 Vercel 환경 변수 `NEXT_PUBLIC_SITE_URL=https://picktalk.vercel.app` */
 
 export const SITE_NAME = "PickTalk";
 export const SITE_TAGLINE =

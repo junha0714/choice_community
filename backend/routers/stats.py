@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import Post, Comment, Vote
 from typing import Sequence
-from categories import ALLOWED_CATEGORIES, BOARD_CATEGORIES
+from categories import ALLOWED_CATEGORIES, BOARD_CATEGORIES, normalize_category
 from schemas import (
     CategoryStat,
     PopularPostBrief,
@@ -81,7 +81,10 @@ def stats_categories(db: Session = Depends(get_db)):
         .group_by(Post.category)
         .all()
     )
-    count_map = {r[0]: int(r[1]) for r in rows}
+    count_map: dict[str, int] = {}
+    for cat, cnt in rows:
+        norm = normalize_category(cat)
+        count_map[norm] = count_map.get(norm, 0) + int(cnt)
     return [
         CategoryStat(category=cat, count=count_map.get(cat, 0))
         for cat in ALLOWED_CATEGORIES
