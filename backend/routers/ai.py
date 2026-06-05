@@ -27,9 +27,118 @@ from app_helpers import (
     _load_ai_session_transcript,
     _get_ai_session_or_404,
     _ai_session_post_like,
+    _delete_ai_session,
 )
 
 router = APIRouter(tags=["ai"])
+
+
+def _copy_session_interactions_to_post(
+    db: Session, post_id: int, interactions: list[AISessionInteraction]
+) -> None:
+    db.query(AIInteraction).filter(AIInteraction.post_id == post_id).delete(
+        synchronize_session=False
+    )
+    for it in interactions:
+        db.add(
+            AIInteraction(
+                post_id=post_id,
+                step_number=it.step_number,
+                question=it.question,
+                answer=it.answer,
+            )
+        )
+
+
+def _default_ai_transcript_public(db: Session, user_id: int) -> bool:
+    user = db.query(User).filter(User.id == user_id).first()
+    return bool(getattr(user, "default_ai_transcript_public", False)) if user else False
+
+
+def _post_fields_from_session(sess: AISession, *, include_transcript_public: bool | None = None) -> dict:
+    fields = {
+        "title": sess.title,
+        "content": sess.content,
+        "category": sess.category,
+        "options": sess.options,
+        "post_kind": "ai",
+        "ai_mode": sess.ai_mode,
+        "ai_question_steps": getattr(sess, "ai_question_steps", None),
+        "tags": sess.tags,
+        "vote_deadline_at": sess.vote_deadline_at,
+        "ai_recommended": sess.ai_recommended,
+        "ai_reason": sess.ai_reason,
+    }
+    if include_transcript_public is not None:
+        fields["ai_transcript_public"] = include_transcript_public
+    return fields
+
+
+def _save_ai_session_draft(
+    db: Session, sess: AISession, session_id: str
+) -> int | None:
+    """AI 결과를 마이페이지 임시저장 글로 동기화한다."""
+    if not (sess.ai_recommended or "").strip():
+        return None
+
+    interactions = (
+        db.query(AISessionInteraction)
+        .filter(AISessionInteraction.session_id == session_id)
+        .order_by(AISessionInteraction.step_number.asc())
+        .all()
+    )
+    draft_id = getattr(sess, "draft_post_id", None)
+    if draft_id:
+        post = (
+            db.query(Post)
+            .filter(
+                Post.id == draft_id,
+                Post.user_id == sess.user_id,
+                Post.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if post:
+            fields = _post_fields_from_session(sess)
+            for key, val in fields.items():
+                setattr(post, key, val)
+            post.is_published = False
+            db.commit()
+            _copy_session_interactions_to_post(db, post.id, interactions)
+            db.commit()
+            return post.id
+
+    fields = _post_fields_from_session(
+        sess,
+        include_transcript_public=_default_ai_transcript_public(db, sess.user_id),
+    )
+    new_post = Post(user_id=sess.user_id, is_published=False, **fields)
+    db.add(new_post)
+    db.commit()
+    db.refresh(new_post)
+    _copy_session_interactions_to_post(db, new_post.id, interactions)
+    sess.draft_post_id = new_post.id
+    db.commit()
+    return new_post.id
+
+
+def _ai_result_payload(
+    db: Session,
+    sess: AISession,
+    session_id: str,
+    *,
+    recommended: str,
+    reason: str,
+    transcript: list[AITranscriptItem],
+) -> dict:
+    draft_post_id = _save_ai_session_draft(db, sess, session_id)
+    return {
+        "type": "result",
+        "recommended": recommended,
+        "reason": reason,
+        "transcript": transcript,
+        "draft_post_id": draft_post_id,
+    }
 
 
 def _run_standard_ai_final_recommendation(
@@ -161,14 +270,15 @@ def ai_session_start(
             sess.ai_reason = reason_rf
             db.commit()
             db.refresh(sess)
-            return {
-                "session_id": sess.id,
-                "type": "result",
-                "recommended": rec_out,
-                "reason": reason_rf,
-                "transcript": [],
-                "step": None,
-            }
+            result = _ai_result_payload(
+                db,
+                sess,
+                sess.id,
+                recommended=rec_out,
+                reason=reason_rf,
+                transcript=[],
+            )
+            return {"session_id": sess.id, "step": None, **result}
 
         mx = _ai_max_question_steps(post_like)
         sys_first = _ai_system_prompt_question(
@@ -186,11 +296,13 @@ def ai_session_start(
             + _first_question_human_opening_suffix(post_like)
             + _anti_binary_redundant_user_suffix(post_like)
             + _anti_obvious_restate_user_suffix(post_like)
-            + _ai_no_tournament_user_suffix(post_like)
+            + _ai_no_tournament_user_suffix(
+                post_like, [], next_step=1, max_rounds=mx
+            )
             + _ai_thin_context_user_suffix(post_like)
             + _ai_question_context_suffix([])
             + _ai_mode_question_user_suffix(
-                mode=mode_n, step=1, max_rounds=mx
+                mode=mode_n, step=1, max_rounds=mx, post=post_like
             )
         )
 
@@ -207,20 +319,46 @@ def ai_session_start(
             data = _parse_ai_json_response(response.choices[0].message.content)
             question_text = _extract_question_text(data).strip()
             if not question_should_reject(
-                question_text, post_like, [], None, is_first_question=True
+                question_text,
+                post_like,
+                [],
+                None,
+                is_first_question=True,
+                next_step=1,
+                max_rounds=mx,
             ):
                 break
             _, pen = question_rejection_penalties(
-                question_text, post_like, [], None, is_first_question=True
+                question_text,
+                post_like,
+                [],
+                None,
+                is_first_question=True,
+                next_step=1,
+                max_rounds=mx,
             )
+            retry_hint = ""
+            if pen.get("narrow_pairwise_subset"):
+                retry_hint = (
+                    " 선택지가 3개 이상인데 두 후보만 맞댔다. "
+                    "전체 후보를 염두에 둔 질문(기준·제외·남은 후보들 중)으로 바꿔라. "
+                    "글에 없는 특정 상황(여행·맛집 등)을 붙이지 마라."
+                )
             sys_loop = (
                 sys_first
                 + " 질문 품질 점검에서 감점이 컸다. "
                 f"감점 항목: {list(pen.keys())}. "
                 f"[질문 의도: {intent0.value}]는 유지하고, 그 의도에 맞게 한 문장만 다시 써라."
+                + retry_hint
             )
         if question_should_reject(
-            question_text, post_like, [], None, is_first_question=True
+            question_text,
+            post_like,
+            [],
+            None,
+            is_first_question=True,
+            next_step=1,
+            max_rounds=mx,
         ):
             question_text = _smart_fallback_question(post_like, [], intent=intent0)
 
@@ -313,12 +451,14 @@ def ai_session_next(
             db.commit()
             db.refresh(sess)
             tr_final = _load_ai_session_transcript(db, session_id)
-            return {
-                "type": "result",
-                "recommended": rec,
-                "reason": sess.ai_reason or "",
-                "transcript": tr_final,
-            }
+            return _ai_result_payload(
+                db,
+                sess,
+                session_id,
+                recommended=rec,
+                reason=sess.ai_reason or "",
+                transcript=tr_final,
+            )
 
         # 다음 질문 생성
         next_step = current_step + 1
@@ -346,12 +486,21 @@ def ai_session_next(
             + _next_ai_user_suffix_binary(post_like)
             + _anti_obvious_restate_user_suffix(post_like)
             + _answer_consistency_user_suffix(conversation_text)
-            + _ai_no_tournament_user_suffix(post_like)
+            + _ai_no_tournament_user_suffix(
+                post_like,
+                prev_questions,
+                next_step=next_step,
+                max_rounds=max_steps,
+            )
+            + _skip_answer_pivot_suffix(post_like, prev_questions, last_answer)
             + _ai_question_style_rotation_suffix(prev_questions)
             + _ai_thin_context_user_suffix(post_like)
             + _ai_question_context_suffix(prev_questions)
             + _ai_mode_question_user_suffix(
-                mode=mode_n, step=next_step, max_rounds=max_steps
+                mode=mode_n,
+                step=next_step,
+                max_rounds=max_steps,
+                post=post_like,
             )
         )
 
@@ -382,6 +531,11 @@ def ai_session_next(
                         " 사용자가 짧거나 ‘모르겠다’에 가깝게 답했다. "
                         "구체적인 한 축으로 좁히거나, 한두 단어로라도 답하기 쉬운 질문으로 바꿔라."
                     )
+                if _answer_is_skip(last_answer):
+                    extra += (
+                        " 사용자가 질문을 넘겼다. 다른 각도로, "
+                        "선택지가 3개 이상이면 두 후보만 맞대지 말고 전체 후보에 연결되게."
+                    )
                 if _recent_stressful_counterfactual_pick_count(prev_questions) >= 1:
                     extra += (
                         " 이미 극단 가정으로 ‘포기·안 고름’을 묻는 질문을 썼다. 같은 류는 피하고 수렴·정리 쪽으로."
@@ -399,9 +553,29 @@ def ai_session_next(
             q_text = _extract_question_text(data).strip()
             if not q_text:
                 continue
-            if not question_should_reject(q_text, post_like, prev_questions, last_answer):
+            if not question_should_reject(
+                q_text,
+                post_like,
+                prev_questions,
+                last_answer,
+                next_step=next_step,
+                max_rounds=max_steps,
+            ):
                 chosen = q_text
                 break
+            _, pen = question_rejection_penalties(
+                q_text,
+                post_like,
+                prev_questions,
+                last_answer,
+                next_step=next_step,
+                max_rounds=max_steps,
+            )
+            if pen.get("narrow_pairwise_subset"):
+                extra += (
+                    " 선택지가 3개 이상인데 두 후보만 맞댔다. "
+                    "전체 후보를 염두에 둔 질문으로 바꿔라."
+                )
 
         if not chosen:
             chosen = _smart_fallback_question(post_like, prev_questions, intent=q_intent)
@@ -439,61 +613,35 @@ def ai_session_publish(
     if not (sess.ai_recommended or "").strip():
         raise HTTPException(status_code=400, detail="아직 AI 대화가 완료되지 않았어요.")
 
-    interactions = (
-        db.query(AISessionInteraction)
-        .filter(AISessionInteraction.session_id == session_id)
-        .order_by(AISessionInteraction.step_number.asc())
-        .all()
-    )
+    draft_post_id = _save_ai_session_draft(db, sess, session_id)
+    if not draft_post_id:
+        raise HTTPException(status_code=400, detail="임시저장 글을 만들지 못했어요.")
 
-    new_post = Post(
-        title=sess.title,
-        content=sess.content,
-        category=sess.category,
-        options=sess.options,
-        user_id=current_user.id,
-        post_kind="ai",
-        ai_mode=sess.ai_mode,
-        ai_question_steps=getattr(sess, "ai_question_steps", None),
-        tags=sess.tags,
-        vote_deadline_at=sess.vote_deadline_at,
-        ai_recommended=sess.ai_recommended,
-        ai_reason=sess.ai_reason,
-        ai_transcript_public=False,
-    )
-    db.add(new_post)
-    db.commit()
-    db.refresh(new_post)
-
-    # 세션 대화 로그를 post 대화 로그로 복사
-    for it in interactions:
-        db.add(
-            AIInteraction(
-                post_id=new_post.id,
-                step_number=it.step_number,
-                question=it.question,
-                answer=it.answer,
-            )
+    post = (
+        db.query(Post)
+        .filter(
+            Post.id == draft_post_id,
+            Post.user_id == current_user.id,
+            Post.deleted_at.is_(None),
         )
-    db.commit()
-
-    # 세션 정리
-    # FK 제약 때문에 interaction을 먼저 삭제/커밋 후 session을 삭제한다.
-    (
-        db.query(AISessionInteraction)
-        .filter(AISessionInteraction.session_id == session_id)
-        .delete(synchronize_session=False)
+        .first()
     )
+    if not post:
+        raise HTTPException(status_code=404, detail="임시저장 글을 찾을 수 없습니다.")
+
+    post.is_published = True
     db.commit()
-    db.delete(sess)
-    db.commit()
+    db.refresh(post)
+
+    _delete_ai_session(db, session_id, sess)
 
     nick_map = _nickname_map(db, {current_user.id})
+    comment_count = 0
     return _post_to_response(
-        new_post,
+        post,
         nick_map,
         liked_by_me=None,
-        comment_count=0,
+        comment_count=comment_count,
     )
 
 @router.post("/posts/{post_id}/start-ai", response_model=AIQuestionFlowResponse)
@@ -562,11 +710,11 @@ def start_ai(
             + _first_question_human_opening_suffix(post)
             + _anti_binary_redundant_user_suffix(post)
             + _anti_obvious_restate_user_suffix(post)
-            + _ai_no_tournament_user_suffix(post)
+            + _ai_no_tournament_user_suffix(post, [], next_step=1, max_rounds=mx)
             + _ai_thin_context_user_suffix(post)
             + _ai_question_context_suffix([])
             + _ai_mode_question_user_suffix(
-                mode=mode_n, step=1, max_rounds=mx
+                mode=mode_n, step=1, max_rounds=mx, post=post
             )
         )
 
@@ -583,21 +731,47 @@ def start_ai(
             data = _parse_ai_json_response(response.choices[0].message.content)
             question_text = _extract_question_text(data).strip()
             if not question_should_reject(
-                question_text, post, [], None, is_first_question=True
+                question_text,
+                post,
+                [],
+                None,
+                is_first_question=True,
+                next_step=1,
+                max_rounds=mx,
             ):
                 break
             _, pen = question_rejection_penalties(
-                question_text, post, [], None, is_first_question=True
+                question_text,
+                post,
+                [],
+                None,
+                is_first_question=True,
+                next_step=1,
+                max_rounds=mx,
             )
+            retry_hint = ""
+            if pen.get("narrow_pairwise_subset"):
+                retry_hint = (
+                    " 선택지가 3개 이상인데 두 후보만 맞댔다. "
+                    "전체 후보를 염두에 둔 질문으로 바꿔라. "
+                    "글에 없는 특정 상황을 붙이지 마라."
+                )
             sys_loop = (
                 sys_first
                 + " 질문 품질 점검에서 감점이 컸다(반복·단순 취향 재확인·장황함 등). "
                 f"감점 항목: {list(pen.keys())}. "
                 f"[질문 의도: {intent0.value}]는 유지하고, 그 의도에 맞게 한 문장만 다시 써라."
+                + retry_hint
             )
 
         if question_should_reject(
-            question_text, post, [], None, is_first_question=True
+            question_text,
+            post,
+            [],
+            None,
+            is_first_question=True,
+            next_step=1,
+            max_rounds=mx,
         ):
             question_text = _smart_fallback_question(post, [], intent=intent0)
 
@@ -727,12 +901,21 @@ def next_ai(
             + _next_ai_user_suffix_binary(post)
             + _anti_obvious_restate_user_suffix(post)
             + _answer_consistency_user_suffix(conversation_text)
-            + _ai_no_tournament_user_suffix(post)
+            + _ai_no_tournament_user_suffix(
+                post,
+                prev_questions,
+                next_step=next_step,
+                max_rounds=max_steps,
+            )
+            + _skip_answer_pivot_suffix(post, prev_questions, last_answer)
             + _ai_question_style_rotation_suffix(prev_questions)
             + _ai_thin_context_user_suffix(post)
             + _ai_question_context_suffix(prev_questions)
             + _ai_mode_question_user_suffix(
-                mode=mode_n, step=next_step, max_rounds=max_steps
+                mode=mode_n,
+                step=next_step,
+                max_rounds=max_steps,
+                post=post,
             )
         )
 
@@ -763,6 +946,11 @@ def next_ai(
                         " 사용자가 짧거나 ‘모르겠다’에 가깝게 답했다. "
                         "구체적인 한 축으로 좁히거나, 한두 단어로라도 답하기 쉬운 질문으로 바꿔라."
                     )
+                if _answer_is_skip(last_answer):
+                    extra += (
+                        " 사용자가 질문을 넘겼다. 다른 각도로, "
+                        "선택지가 3개 이상이면 두 후보만 맞대지 말고 전체 후보에 연결되게."
+                    )
                 if _recent_stressful_counterfactual_pick_count(prev_questions) >= 1:
                     extra += (
                         " 이미 극단 가정으로 ‘포기·안 고름’을 묻는 질문을 썼다. 같은 류는 피하고 수렴·정리 쪽으로."
@@ -779,9 +967,29 @@ def next_ai(
 
             data = _parse_ai_json_response(response.choices[0].message.content)
             cq = _extract_question_text(data).strip()
-            if not question_should_reject(cq, post, prev_questions, last_answer):
+            if not question_should_reject(
+                cq,
+                post,
+                prev_questions,
+                last_answer,
+                next_step=next_step,
+                max_rounds=max_steps,
+            ):
                 chosen = cq
                 break
+            _, pen = question_rejection_penalties(
+                cq,
+                post,
+                prev_questions,
+                last_answer,
+                next_step=next_step,
+                max_rounds=max_steps,
+            )
+            if pen.get("narrow_pairwise_subset"):
+                extra += (
+                    " 선택지가 3개 이상인데 두 후보만 맞댔다. "
+                    "전체 후보를 염두에 둔 질문으로 바꿔라."
+                )
 
         next_question = (
             chosen

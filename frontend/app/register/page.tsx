@@ -3,7 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+import { AuthField } from "@/components/auth/AuthField";
+import { AuthFormShell } from "@/components/auth/AuthFormShell";
+import { AuthNotice } from "@/components/auth/AuthNotice";
 import { API_BASE_URL } from "@/lib/config";
+import { AUTH_ACTION_LOGIN, AUTH_BTN_PRIMARY } from "@/lib/auth-form-classes";
 import { fetchWithTimeout, isAbortError } from "@/lib/fetch-with-timeout";
 
 export default function RegisterPage() {
@@ -44,10 +48,10 @@ export default function RegisterPage() {
     } catch (err) {
       if (isAbortError(err)) {
         setError(
-          "서버 응답이 없습니다. FastAPI(보통 8000번)가 켜져 있는지, PostgreSQL이 실행 중인지 확인해 주세요."
+          "서버에 연결할 수 없어요. 백엔드와 DB가 실행 중인지 확인해 주세요."
         );
       } else {
-        setError(err instanceof Error ? err.message : "회원가입 실패");
+        setError(err instanceof Error ? err.message : "회원가입에 실패했습니다.");
       }
     } finally {
       setLoading(false);
@@ -55,70 +59,69 @@ export default function RegisterPage() {
   };
 
   return (
-    <main className="mx-auto w-full max-w-md">
-      <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">
-        <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
-          회원가입
-        </h1>
-        <p className="mt-2 text-sm text-zinc-600 dark:text-[#AFC6D8]">
-          이미 계정이 있으면{" "}
-          <Link href="/login" className="text-indigo-700 hover:underline dark:text-indigo-200">
-            로그인
-          </Link>
+    <AuthFormShell
+      title="회원가입"
+      lead="몇 가지만 입력하면 바로 고민 글쓰기와 투표에 참여할 수 있어요."
+    >
+      <ul className="space-y-1.5 text-xs leading-relaxed text-zinc-600 dark:text-[#9bb3c7]">
+        <li className="flex gap-2">
+          <span className="font-semibold text-sky-600 dark:text-sky-400">1.</span>
+          <span>이메일·비밀번호로 계정을 만들어요</span>
+        </li>
+        <li className="flex gap-2">
+          <span className="font-semibold text-sky-600 dark:text-sky-400">2.</span>
+          <span>닉네임은 나중에 마이페이지에서도 바꿀 수 있어요</span>
+        </li>
+      </ul>
+
+      <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+        <AuthField
+          id="register-email"
+          label="이메일"
+          type="email"
+          autoComplete="email"
+          placeholder="you@example.com"
+          value={email}
+          onChange={setEmail}
+          required
+        />
+        <AuthField
+          id="register-password"
+          label="비밀번호"
+          type="password"
+          autoComplete="new-password"
+          placeholder="8자 이상"
+          value={password}
+          onChange={setPassword}
+          required
+          minLength={8}
+          hint="영문·숫자를 섞어 8자 이상 입력해 주세요."
+        />
+        <AuthField
+          id="register-nickname"
+          label="닉네임 (선택)"
+          type="text"
+          autoComplete="nickname"
+          placeholder="게시판에 표시될 이름"
+          value={nickname}
+          onChange={setNickname}
+          maxLength={50}
+          hint="비워 두면 닉네임 없이 활동할 수 있어요."
+        />
+
+        {error ? <AuthNotice variant="error">{error}</AuthNotice> : null}
+
+        <button type="submit" disabled={loading} className={AUTH_BTN_PRIMARY}>
+          {loading ? "가입 중..." : "가입하기"}
+        </button>
+
+        <p className="pt-1 text-center text-xs text-zinc-500 dark:text-[#9bb3c7]">
+          이미 계정이 있으신가요?
         </p>
-
-        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-          <label className="block text-sm font-medium text-zinc-700 dark:text-[#AFC6D8]">
-            이메일
-            <input
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30"
-            />
-          </label>
-          <label className="block text-sm font-medium text-zinc-700 dark:text-[#AFC6D8]">
-            비밀번호 (8자 이상)
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              minLength={8}
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30"
-            />
-          </label>
-          <label className="block text-sm font-medium text-zinc-700 dark:text-[#AFC6D8]">
-            닉네임 (선택)
-            <input
-              type="text"
-              value={nickname}
-              onChange={(e) => setNickname(e.target.value)}
-              maxLength={50}
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30"
-            />
-          </label>
-
-          {error && <p className="text-sm text-red-700 dark:text-red-200">{error}</p>}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-emerald-500/90 dark:hover:bg-emerald-400/90"
-          >
-            {loading ? "처리 중..." : "가입하기"}
-          </button>
-        </form>
-
-        <p className="mt-5 text-sm text-zinc-600 dark:text-[#AFC6D8]">
-          <Link href="/" className="text-zinc-600 hover:underline dark:text-sky-300/80">
-            ← 홈으로
-          </Link>
-        </p>
-      </div>
-    </main>
+        <Link href="/login" className={AUTH_ACTION_LOGIN}>
+          로그인하기
+        </Link>
+      </form>
+    </AuthFormShell>
   );
 }

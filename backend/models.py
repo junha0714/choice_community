@@ -18,11 +18,23 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)
+    hashed_password = Column(String(255), nullable=True)
     nickname = Column(String(50), nullable=True)
+    auth_provider = Column(String(20), nullable=False, server_default="email", default="email")
+    provider_subject = Column(String(255), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     is_admin = Column(Boolean, nullable=False, server_default="false", default=False)
     is_banned = Column(Boolean, nullable=False, server_default="false", default=False)
+    # 글쓰기 기본 AI 모드: quick|deep|friend
+    default_ai_mode = Column(String(20), nullable=False, server_default="quick")
+    # AI 글 임시저장·게시 시 ai_transcript_public 기본값
+    default_ai_transcript_public = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
+    notify_comment = Column(Boolean, nullable=False, server_default="true", default=True)
+    notify_reply = Column(Boolean, nullable=False, server_default="true", default=True)
+    notify_like = Column(Boolean, nullable=False, server_default="true", default=True)
+    notify_vote_end = Column(Boolean, nullable=False, server_default="true", default=True)
 
 
 class Post(Base):
@@ -50,6 +62,8 @@ class Post(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     is_hidden = Column(Boolean, nullable=False, server_default="false", default=False)
+    # False면 작성자 마이페이지에만 보이는 임시저장(AI 결과 대기 등)
+    is_published = Column(Boolean, nullable=False, server_default="true", default=True)
     # 쉼표로 구분된 태그 (소문자 정규화), 예: "고민,연애"
     tags = Column(Text, nullable=True)
     # 투표 마감 시각 (NULL이면 마감 없음)
@@ -64,6 +78,7 @@ class Comment(Base):
     post_id = Column(Integer, ForeignKey("posts.id"))
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     parent_id = Column(Integer, ForeignKey("comments.id"), nullable=True, index=True)
+    is_anonymous = Column(Boolean, nullable=False, default=False, server_default="false")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     deleted_at = Column(DateTime(timezone=True), nullable=True)
@@ -105,6 +120,8 @@ class AISession(Base):
 
     ai_recommended = Column(Text, nullable=True)
     ai_reason = Column(Text, nullable=True)
+    # 결과 확정 시 연결되는 임시저장 글 (게시 전)
+    draft_post_id = Column(Integer, ForeignKey("posts.id"), nullable=True, index=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=True)

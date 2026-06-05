@@ -1,8 +1,9 @@
 import { ImageResponse } from "next/og";
+import { SITE_NAME, SITE_TAGLINE } from "@/lib/site";
 
 export const runtime = "edge";
 
-export const alt = "Choice Community — 투표·AI·후기로 검증하는 선택지 커뮤니티";
+export const alt = `${SITE_NAME} — ${SITE_TAGLINE}`;
 
 export const size = {
   width: 1200,
@@ -42,7 +43,7 @@ export default async function Image() {
               letterSpacing: "-0.02em",
             }}
           >
-            Choice Community
+            {SITE_NAME}
           </div>
           <div
             style={{
@@ -52,7 +53,7 @@ export default async function Image() {
               fontWeight: 600,
             }}
           >
-            투표로 모으고 · AI로 정리하고 · 후기로 검증하는 선택지 커뮤니티
+            {SITE_TAGLINE}
           </div>
         </div>
       </div>

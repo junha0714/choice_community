@@ -1,5 +1,6 @@
 """Small helpers shared by posts, votes, and AI flows."""
 
+from categories import is_board_category
 from models import Post
 
 
@@ -9,4 +10,6 @@ def tags_list(post: Post) -> list[str]:
 
 
 def post_option_list(post: Post) -> list[str]:
-    return [o.strip() for o in post.options.split(",") if o.strip()]
+    if is_board_category(getattr(post, "category", None)):
+        return []
+    return [o.strip() for o in (post.options or "").split(",") if o.strip()]

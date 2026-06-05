@@ -1,11 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE_URL } from "@/lib/config";
 import { getStoredToken } from "@/lib/auth-storage";
 import { jsonAuthHeaders } from "@/lib/auth-headers";
+import { formatPostDateLabel } from "@/lib/format-datetime";
 
 type NotificationItem = {
   id: number;
@@ -84,9 +84,6 @@ export default function NotificationsPage() {
           알림
         </h1>
         <div className="flex gap-2 text-sm">
-          <Link href="/" className="text-zinc-600 hover:underline dark:text-sky-300/80">
-            ← 홈
-          </Link>
           {items.some((n) => !n.read_at) ? (
             <button
               type="button"
@@ -126,7 +123,7 @@ export default function NotificationsPage() {
                 <div className="font-medium text-zinc-900 dark:text-white">{n.title}</div>
                 <p className="mt-1 whitespace-pre-wrap text-zinc-600 dark:text-[#cbd5e1]">{n.body}</p>
                 <div className="mt-2 text-xs text-zinc-400 dark:text-[#94a3b8]">
-                  {new Date(n.created_at).toLocaleString("ko-KR")}
+                  {formatPostDateLabel(n.created_at)}
                   {n.post_id != null ? (
                     <span className="ml-2 text-indigo-700 dark:text-indigo-200">글로 이동 →</span>
                   ) : null}

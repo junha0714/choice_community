@@ -18,8 +18,26 @@ from models import (
     UserBlock,
     Notification,
 )
+from categories import is_board_category, is_notice_category
 from schemas import PostResponse, SimilarPostBrief, CommentResponse, AITranscriptItem
 from post_utils import tags_list
+
+_NOTIFY_PREF_MAP = {
+    "comment_on_post": "notify_comment",
+    "reply_to_comment": "notify_reply",
+    "post_liked": "notify_like",
+    "vote_closed": "notify_vote_end",
+}
+
+
+def _user_accepts_notification(user: User | None, kind: str) -> bool:
+    if not user:
+        return True
+    pref_key = _NOTIFY_PREF_MAP.get(kind)
+    if not pref_key:
+        return True
+    return bool(getattr(user, pref_key, True))
+
 
 def _notify(
     db: Session,
@@ -33,6 +51,9 @@ def _notify(
     report_id: int | None = None,
 ) -> None:
     if not user_id:
+        return
+    recipient = db.query(User).filter(User.id == user_id).first()
+    if not _user_accepts_notification(recipient, kind):
         return
     db.add(
         Notification(
@@ -66,13 +87,25 @@ def _comment_to_response(
     c: Comment,
     nick_map: dict[int, str | None],
     reply_map: dict[int, int],
+    *,
+    viewer_user_id: int | None = None,
+    viewer_is_admin: bool = False,
 ) -> CommentResponse:
+    is_anonymous = bool(getattr(c, "is_anonymous", False))
+    can_see_author = (
+        not is_anonymous
+        or (viewer_user_id is not None and c.user_id == viewer_user_id)
+        or viewer_is_admin
+    )
     return CommentResponse(
         id=c.id,
         content=c.content,
         post_id=c.post_id,
-        user_id=c.user_id,
-        author_nickname=nick_map.get(c.user_id) if c.user_id else None,
+        user_id=c.user_id if can_see_author else None,
+        author_nickname=(
+            nick_map.get(c.user_id) if c.user_id and can_see_author else None
+        ),
+        is_anonymous=is_anonymous,
         parent_id=getattr(c, "parent_id", None),
         reply_count=reply_map.get(c.id, 0),
         created_at=c.created_at,
@@ -104,6 +137,7 @@ def _post_to_response(
     *,
     liked_by_me: bool | None = None,
     comment_count: int | None = None,
+    vote_count: int | None = None,
 ) -> PostResponse:
     kind = getattr(post, "post_kind", None) or "community"
     return PostResponse(
@@ -117,6 +151,7 @@ def _post_to_response(
         ai_question_steps=getattr(post, "ai_question_steps", None),
         view_count=getattr(post, "view_count", None) or 0,
         like_count=getattr(post, "like_count", None) or 0,
+        vote_count=int(vote_count or 0),
         comment_count=int(comment_count or 0),
         liked_by_me=liked_by_me,
         ai_recommended=getattr(post, "ai_recommended", None),
@@ -126,6 +161,9 @@ def _post_to_response(
         author_nickname=nick_map.get(post.user_id) if post.user_id else None,
         created_at=post.created_at,
         is_hidden=bool(getattr(post, "is_hidden", False)),
+        is_published=bool(getattr(post, "is_published", True)),
+        is_notice=is_notice_category(post.category),
+        is_board_post=is_board_category(post.category),
         tags=tags_list(post),
         vote_deadline_at=getattr(post, "vote_deadline_at", None),
     )
@@ -166,6 +204,7 @@ def _get_blocked_ids(db: Session, blocker_id: int) -> set[int]:
 
 def _posts_list_query(db: Session, current_user: User | None):
     q = db.query(Post).filter(Post.deleted_at.is_(None))
+    q = q.filter(func.coalesce(Post.is_published, True).is_(True))
     if current_user is None or not getattr(current_user, "is_admin", False):
         # is_hidden IS NULL 인 레거시 행도 목록에 포함 (== False 는 NULL 행을 SQL에서 제외함)
         q = q.filter(func.coalesce(Post.is_hidden, False).is_(False))
@@ -207,6 +246,8 @@ def _get_post_or_404(
     if post.deleted_at is not None and not admin:
         raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
     if getattr(post, "is_hidden", False) and not admin and not author:
+        raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
+    if not bool(getattr(post, "is_published", True)) and not admin and not author:
         raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
     return post
 def _tokenize_for_tag_suggest(text: str) -> set[str]:
@@ -298,6 +339,19 @@ def _load_ai_session_transcript(db: Session, session_id: str) -> list[AITranscri
         AITranscriptItem(step=r.step_number, question=r.question, answer=r.answer)
         for r in rows
     ]
+
+
+def _delete_ai_session(db: Session, session_id: str, sess) -> None:
+    from models import AISessionInteraction
+
+    (
+        db.query(AISessionInteraction)
+        .filter(AISessionInteraction.session_id == session_id)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    db.delete(sess)
+    db.commit()
 
 
 def _get_ai_session_or_404(

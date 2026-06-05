@@ -1,8 +1,14 @@
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator, ValidationInfo
 from typing import List, Literal
 from datetime import datetime
 
-from categories import ALLOWED_CATEGORIES
+from categories import (
+    ALLOWED_CATEGORIES,
+    normalize_category,
+    is_board_category,
+    is_notice_category,
+    is_suggestion_category,
+)
 
 
 # --- 인증 ---
@@ -28,14 +34,45 @@ class UserPublic(BaseModel):
     nickname: str | None
     created_at: datetime
     is_admin: bool = False
+    auth_provider: str = "email"
 
     class Config:
         from_attributes = True
 
 
+class OAuthProvidersResponse(BaseModel):
+    google: bool = False
+    kakao: bool = False
+
+
 class UserProfileUpdate(BaseModel):
     """닉네임만 수정 (빈 문자열이면 닉네임 제거)"""
     nickname: str = Field(default="", max_length=50)
+
+
+class UserSettingsResponse(BaseModel):
+    default_ai_mode: str = "quick"
+    default_ai_transcript_public: bool = False
+    notify_comment: bool = True
+    notify_reply: bool = True
+    notify_like: bool = True
+    notify_vote_end: bool = True
+
+    class Config:
+        from_attributes = True
+
+
+class UserSettingsUpdate(BaseModel):
+    default_ai_mode: Literal["quick", "deep", "friend"] | None = None
+    default_ai_transcript_public: bool | None = None
+    notify_comment: bool | None = None
+    notify_reply: bool | None = None
+    notify_like: bool | None = None
+    notify_vote_end: bool | None = None
+
+
+class AccountDeleteBody(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
 
 
 def _normalize_tag_list(v: List[str] | None) -> List[str]:
@@ -87,14 +124,17 @@ class PostCreate(BaseModel):
     @field_validator("category")
     @classmethod
     def validate_category(cls, v: str) -> str:
-        t = (v or "").strip()
+        t = normalize_category(v)
         if t not in ALLOWED_CATEGORIES:
             raise ValueError("카테고리를 목록에서 선택해 주세요.")
         return t
 
     @field_validator("options")
     @classmethod
-    def validate_options(cls, v: List[str]) -> List[str]:
+    def validate_options(cls, v: List[str], info: ValidationInfo) -> List[str]:
+        cat = (info.data.get("category") or "").strip() if info.data else ""
+        if is_board_category(cat):
+            return []
         stripped = [x.strip() for x in v if str(x).strip()]
         if len(stripped) < 2:
             raise ValueError(
@@ -103,6 +143,20 @@ class PostCreate(BaseModel):
         if len(stripped) > 6:
             raise ValueError("선택지는 최대 6개까지예요.")
         return stripped
+
+    @model_validator(mode="after")
+    def validate_board_post(self) -> "PostCreate":
+        if is_notice_category(self.category):
+            if self.post_kind == "ai":
+                raise ValueError("공지는 AI 글로 작성할 수 없어요.")
+            object.__setattr__(self, "options", [])
+            object.__setattr__(self, "vote_deadline_at", None)
+        elif is_suggestion_category(self.category):
+            if self.post_kind == "ai":
+                raise ValueError("건의 게시판은 AI 글로 작성할 수 없어요.")
+            object.__setattr__(self, "options", [])
+            object.__setattr__(self, "vote_deadline_at", None)
+        return self
 
 class PostUpdate(BaseModel):
     title: str | None = None
@@ -125,16 +179,21 @@ class PostUpdate(BaseModel):
     def validate_category(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        t = (v or "").strip()
+        t = normalize_category(v)
         if t not in ALLOWED_CATEGORIES:
             raise ValueError("카테고리를 목록에서 선택해 주세요.")
         return t
 
     @field_validator("options")
     @classmethod
-    def validate_options(cls, v: List[str] | None) -> List[str] | None:
+    def validate_options(
+        cls, v: List[str] | None, info: ValidationInfo
+    ) -> List[str] | None:
         if v is None:
             return None
+        cat = (info.data.get("category") or "").strip() if info.data else ""
+        if is_board_category(cat):
+            return []
         stripped = [x.strip() for x in v if str(x).strip()]
         if len(stripped) < 2:
             raise ValueError(
@@ -143,6 +202,13 @@ class PostUpdate(BaseModel):
         if len(stripped) > 6:
             raise ValueError("선택지는 최대 6개까지예요.")
         return stripped
+
+    @model_validator(mode="after")
+    def validate_board_update(self) -> "PostUpdate":
+        if self.category is not None and is_board_category(self.category):
+            object.__setattr__(self, "options", [])
+            object.__setattr__(self, "vote_deadline_at", None)
+        return self
 
 
 class PostResponse(BaseModel):
@@ -156,6 +222,7 @@ class PostResponse(BaseModel):
     ai_question_steps: int | None = None
     view_count: int = 0
     like_count: int = 0
+    vote_count: int = 0
     comment_count: int = 0
     liked_by_me: bool | None = None
     ai_recommended: str | None = None
@@ -166,6 +233,9 @@ class PostResponse(BaseModel):
     author_nickname: str | None = None
     created_at: datetime
     is_hidden: bool = False
+    is_published: bool = True
+    is_notice: bool = False
+    is_board_post: bool = False
     tags: List[str] = []
     vote_deadline_at: datetime | None = None
 
@@ -202,6 +272,7 @@ class LikeToggleResponse(BaseModel):
 class CommentCreate(BaseModel):
     content: str
     parent_id: int | None = None
+    is_anonymous: bool = False
 
 
 class CommentUpdate(BaseModel):
@@ -214,6 +285,7 @@ class CommentResponse(BaseModel):
     post_id: int
     user_id: int | None = None
     author_nickname: str | None = None
+    is_anonymous: bool = False
     parent_id: int | None = None
     reply_count: int = 0
     created_at: datetime
@@ -283,6 +355,7 @@ class AIQuestionFlowResponse(BaseModel):
     recommended: str | None = None
     reason: str | None = None
     transcript: List[AITranscriptItem] | None = None
+    draft_post_id: int | None = None
 
 
 class AIAnswerRequest(BaseModel):
@@ -392,6 +465,24 @@ class PopularPostByViewsBrief(BaseModel):
     title: str
     category: str
     view_count: int
+
+
+class TrendingPostBrief(BaseModel):
+    id: int
+    title: str
+    category: str
+    view_count: int = 0
+    like_count: int = 0
+    vote_count: int = 0
+    comment_count: int = 0
+
+
+class TrendingPostsBundle(BaseModel):
+    """사이드바 인기 글 (투표·조회·좋아요). days 미지정 시 전체 기간."""
+
+    by_votes: list[TrendingPostBrief] = []
+    by_views: list[TrendingPostBrief] = []
+    by_likes: list[TrendingPostBrief] = []
 
 
 class RecentCommentBrief(BaseModel):

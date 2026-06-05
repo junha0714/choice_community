@@ -534,7 +534,8 @@ _INTENT_USER_LINES: dict[QuestionIntent, str] = {
         "불확실성 줄이기 — 아직 애매한 점 **한 가지**만 좁혀 묻기."
     ),
     QuestionIntent.FINAL_CONFIRM: (
-        "마무리 확인 — 지금까지 나온 말만으로도 방향이 잡혔는지 **가볍게 한 번**."
+        "마무리 확인 — 지금까지 나온 말만으로도 방향이 잡혔는지 **가볍게 한 번**. "
+        "후보가 3개 이상이면 **이름 있는 두 개만** 맞대지 말고, 남은 후보 전체·기준으로 수렴."
     ),
 }
 
@@ -813,11 +814,19 @@ def _first_question_human_opening_suffix(post: Post) -> str:
     opt_hint = ""
     if opts:
         opt_hint = "선택지: " + ", ".join(o.strip() for o in opts if o.strip()) + ". "
+    multi = ""
+    if len(opts) >= 3:
+        multi = (
+            f" 후보는 {len(opts)}개다 — 두 개만 맞대지 말고, "
+            "전체 후보에 연결되는 기준·제외·우선순위 중 **한 가지**로 물어라. "
+            "글·카테고리에 없는 상황(여행 목적 등)을 임의로 붙이지 마라."
+        )
     return (
         "\n\n[첫 질문 톤] "
         + opt_hint
         + "위 [질문 의도]에 맞춰 한 문장으로 써라. "
         "조건만 잇달아 체크하는 식은 피하고, 글·선택지와 붙은 말로 자연스럽게 물어라."
+        + multi
     )
 
 
@@ -1012,6 +1021,10 @@ def _smart_fallback_question(
     """
     모델이 계속 점수 임계값에 걸릴 때. [질문 의도]에 맞는 범용 문장(도메인 비특이).
     """
+    multi = _multi_option_fallback_question(post, prev_questions, intent=intent)
+    if multi:
+        return multi
+
     opts = post_option_list(post)
     opt_tail = ""
     if opts:
@@ -1264,17 +1277,25 @@ def _ai_mode_question_user_suffix(
     mode: str,
     step: int,
     max_rounds: int,
+    post: Post | None = None,
 ) -> str:
     """유저 메시지에 붙여 모델이 매 턴 다른 문장 형식을 쓰게 한다."""
     m = normalize_ai_mode(mode)
     mx = max(1, int(max_rounds))
     st = max(1, int(step))
+    multi_quick = ""
+    if post is not None and len(post_option_list(post)) >= 3:
+        multi_quick = (
+            " 선택지가 3개 이상이면 **두 후보만 맞대기**보다 "
+            "전체 후보를 염두에 둔 **한 가지**(기준·제외·우선순위 등)로 물어라."
+        )
     if m == "quick":
         return (
             f"\n\n[모드 지시: 빠른 결정] 지금 {st}/{mx}턴 질문이다. "
-            "답이 길어지지 않게 짧게 물어라. 예/아니오·둘 중 하나도 좋고, "
-            "‘지금 가장 걸리는 건 뭐예요?’처럼 한두 문장으로 답 가능한 짧은 질문도 된다. "
-            "상담처럼 깊게 파고들거나 감정만 오래 두드리지 말고, **한 턴에 한 포인트**만."
+            "답이 길어지지 않게 짧게 물어라. "
+            "‘지금 가장 걸리는 기준은 뭐예요?’처럼 한두 문장으로 답 가능하게."
+            + multi_quick
+            + " 상담처럼 깊게 파고들거나 감정만 오래 두드리지 말고, **한 턴에 한 포인트**만."
         )
     if m == "deep":
         late = st >= max(3, mx - 1)
@@ -1430,13 +1451,179 @@ def _ai_question_context_suffix(prev_questions: list[str]) -> str:
     )
 
 
-def _ai_no_tournament_user_suffix(post: Post) -> str:
-    """선택지가 많을 때 기계적 1:1만 반복하지 않도록 짧게."""
-    if len(post_option_list(post)) < 3:
+def _options_named_in_text_list(text: str, post: Post) -> list[str]:
+    return [o for o in post_option_list(post) if _option_named_in_text(o, text)]
+
+
+def _collect_options_mentioned_in_questions(
+    prev_questions: list[str], post: Post
+) -> set[str]:
+    mentioned: set[str] = set()
+    for q in prev_questions:
+        for o in _options_named_in_text_list(q, post):
+            mentioned.add(o)
+    return mentioned
+
+
+def _uncovered_options(prev_questions: list[str], post: Post) -> list[str]:
+    opts = post_option_list(post)
+    mentioned = _collect_options_mentioned_in_questions(prev_questions, post)
+    return [o for o in opts if o not in mentioned]
+
+
+def _question_covers_all_options_broadly(question: str, post: Post) -> bool:
+    """3개 이상 후보일 때, 질문이 부분 2개 맞대기가 아닌 전체·기준·제외형인지."""
+    opts = post_option_list(post)
+    if len(opts) < 3:
+        return True
+    nq = _normalize_question(question)
+    if len(_options_named_in_text_list(question, post)) >= len(opts):
+        return True
+    if len(_options_named_in_text_list(question, post)) <= 1:
+        return True
+    broad_markers = (
+        "후보",
+        "선택지",
+        "옵션",
+        "각각",
+        "전부",
+        "모두",
+        "가장",
+        "제일",
+        "먼저",
+        "남은",
+        "나머지",
+        "리스트",
+    )
+    elimination = ("빼", "제외", "줄이", "탈락", "버릴", "포기할", "안 고를", "안고를")
+    if any(m in nq for m in broad_markers):
+        return True
+    if any(m in nq for m in elimination):
+        return True
+    if re.search(r"[23456]\s*개", nq):
+        return True
+    if "중" in nq and any(x in nq for x in ("뭐", "어느", "무엇", "어디")):
+        if not _question_pits_multiple_named_options(question, post):
+            return True
+    return False
+
+
+def _question_is_narrow_pairwise_subset(question: str, post: Post) -> bool:
+    """후보 3개 이상인데 질문이 이름 있는 2개만 맞대는 경우(도메인 무관)."""
+    opts = post_option_list(post)
+    if len(opts) < 3:
+        return False
+    if _question_covers_all_options_broadly(question, post):
+        return False
+    named = _options_named_in_text_list(question, post)
+    if len(named) == 2 and _question_pits_multiple_named_options(question, post):
+        return True
+    if len(named) == 2:
+        nq = _normalize_question(question)
+        if any(x in nq for x in ("중에", "중에서", "vs", "둘 중", "둘중", "어느 쪽", "어느쪽")):
+            return True
+    return False
+
+
+def _narrow_pairwise_subset_penalty(
+    question: str,
+    post: Post,
+    prev_questions: list[str],
+    *,
+    next_step: int,
+    max_rounds: int,
+) -> int:
+    if not _question_is_narrow_pairwise_subset(question, post):
+        return 0
+    uncovered = _uncovered_options(prev_questions, post)
+    named_q = set(_options_named_in_text_list(question, post))
+    still = [o for o in uncovered if o not in named_q]
+    p = 5
+    if len(still) >= 2:
+        p = 6
+    if next_step >= max_rounds and still:
+        p = max(p, 7)
+    return p
+
+
+def _multi_option_coverage_user_suffix(
+    post: Post,
+    prev_questions: list[str],
+    next_step: int,
+    max_rounds: int,
+) -> str:
+    """선택지 3개 이상: 전체 후보 커버리지(여행·음식 등 특정 상황 가정 금지)."""
+    opts = post_option_list(post)
+    if len(opts) < 3:
         return ""
+    opt_str = ", ".join(o.strip() for o in opts if o.strip())
+    uncovered = _uncovered_options(prev_questions, post)
+    unc_hint = ""
+    if uncovered:
+        unc_hint = f" 아직 질문에서 덜 다룬 후보: {', '.join(uncovered[:8])}."
+    late = next_step >= max(2, max_rounds - 1)
+    no_domain = (
+        " **여행·맛집·연애 등 글·카테고리에 없는 상황**을 임의로 붙이지 말고, "
+        "제목·본문·선택지·직전 답만 근거로 삼아라."
+    )
+    if not prev_questions:
+        return (
+            f"\n\n[선택지 {len(opts)}개] 후보: {opt_str}.{no_domain} "
+            "첫 질문은 **두 개만 맞대지 말고**, 후보 전체에 연결되는 **한 가지**로 물어라 "
+            "(예: 지금 가장 중요한 기준, 먼저 빼고 싶은 후보 1개, 후보를 나누는 기준)."
+        )
+    if late:
+        return (
+            f"\n\n[선택지 {len(opts)}개·후반] 후보: {opt_str}.{unc_hint}{no_domain} "
+            "아직 안 다룬 후보가 있으면 짧게라도 묻거나, ‘남은 후보들 중’처럼 **전체 범위**로 수렴해라. "
+            "**이름 있는 두 후보만** 나란히 맞대며 ‘어느 쪽’만 자르지 마라."
+        )
     return (
-        "\n\n[참고] 선택지가 3개 이상이다. "
-        "같은 문장 틀로 두 개씩만 잘라 반복하지 말고, [질문 의도]에 맞게 한 문장으로 물어라."
+        f"\n\n[선택지 {len(opts)}개] 후보: {opt_str}.{unc_hint}{no_domain} "
+        "**두 후보만** 골라 맞대지 말고, 기준·제외·우선순위·쓰임 등 **후보 전체**에 연결되는 "
+        "한 문장으로 물어라."
+    )
+
+
+def _ai_no_tournament_user_suffix(
+    post: Post,
+    prev_questions: list[str] | None = None,
+    *,
+    next_step: int | None = None,
+    max_rounds: int | None = None,
+) -> str:
+    """선택지 3개 이상: 토너먼트식 2개 맞대기·후보 누락 방지."""
+    opts = post_option_list(post)
+    if len(opts) < 3:
+        return ""
+    pq = prev_questions or []
+    mx = max_rounds if max_rounds is not None else _ai_max_question_steps(post)
+    st = next_step if next_step is not None else max(1, len(pq) + 1)
+    return _multi_option_coverage_user_suffix(post, pq, st, mx)
+
+
+def _answer_is_skip(answer: str | None) -> bool:
+    a = _normalize_question(answer or "")
+    return "넘길" in a or "패스" in a or "스킵" in a
+
+
+def _skip_answer_pivot_suffix(
+    post: Post, prev_questions: list[str], last_answer: str | None
+) -> str:
+    if not _answer_is_skip(last_answer):
+        return ""
+    opts = post_option_list(post)
+    unc = _uncovered_options(prev_questions, post)
+    unc_part = f" 덜 다룬 후보: {', '.join(unc)}." if unc else ""
+    if len(opts) >= 3:
+        return (
+            f"\n\n[질문 넘김] 사용자가 질문을 넘겼다.{unc_part} "
+            "**다른 각도**(기준·제외·우선순위·쓰임)로, 두 후보만 맞대지 말고 "
+            f"**{len(opts)}개 후보 전체**에 연결되게 한 문장만 물어라. "
+            "글·카테고리에 없는 새 상황을 임의로 붙이지 마라."
+        )
+    return (
+        "\n\n[질문 넘김] 사용자가 질문을 넘겼다. **다른 각도**로 한 문장만 물어라."
     )
 
 
@@ -1534,13 +1721,36 @@ def _simple_rhythm_plan_hint(post: Post) -> str:
     return ""
 
 
+def _multi_option_fallback_question(
+    post: Post, prev_questions: list[str], intent: QuestionIntent | None = None
+) -> str | None:
+    """후보 3개 이상일 때 범용 fallback(도메인 비특이)."""
+    opts = [o.strip() for o in post_option_list(post) if o.strip()]
+    if len(opts) < 3:
+        return None
+    opt_tail = f" (후보: {', '.join(opts[:6])})"
+    uncovered = _uncovered_options(prev_questions, post)
+    if intent == QuestionIntent.FINAL_CONFIRM:
+        return f"지금까지 말한 걸 기준으로, 남은 후보들 중 가장 가깝게 느껴지는 쪽이 있어요?{opt_tail}"
+    if uncovered and len(uncovered) >= 2:
+        return (
+            f"후보 {', '.join(opts)} 중, 지금 당장 **빼고 싶은 후보**가 있나요?"
+        )
+    if len(prev_questions) >= 2:
+        return (
+            f"남은 후보들({', '.join(opts)})을 놓고, **가장 중요한 기준** 하나만 꼽자면 뭐예요?"
+        )
+    return f"이 고민에서 **가장 먼저 챙기고 싶은 기준** 하나만요?{opt_tail}"
+
+
 def _fallback_next_question(
     post: Post, prev_questions: list[str] | None = None
 ) -> str:
-    avoid = (
-        prev_questions is not None
-        and _should_avoid_named_option_comparison(prev_questions, post)
-    )
+    pq = prev_questions or []
+    multi = _multi_option_fallback_question(post, pq)
+    if multi:
+        return multi
+    avoid = pq and _should_avoid_named_option_comparison(pq, post)
     if avoid:
         return "생각만 할 때랑, 실제로 해볼 때랑 달라질 것 같은 점이 있어요?"
     if len(post_option_list(post)) == 2:
@@ -1666,6 +1876,10 @@ def _shallow_taste_pair_penalty(
         p = max(p, 3)
     if _pairwise_preference_between_stated_options(question, post):
         p = max(p, 3)
+    if len(post_option_list(post)) >= 3 and _question_is_narrow_pairwise_subset(
+        question, post
+    ):
+        p = max(p, 5)
     if len(post_option_list(post)) == 2 and _binary_followup_forces_option_pick(question, post):
         p = max(p, 2)
     return p
@@ -1696,6 +1910,8 @@ def question_rejection_penalties(
     last_answer: str | None,
     *,
     is_first_question: bool = False,
+    next_step: int | None = None,
+    max_rounds: int | None = None,
 ) -> tuple[int, dict[str, int]]:
     """
     질문 품질 점수(패널티 합). QUESTION_REJECT_SCORE_THRESHOLD 이상이면 재생성 권장.
@@ -1767,6 +1983,14 @@ def question_rejection_penalties(
     if fb:
         penalties["fatigue_axis_repeat"] = fb
         total += fb
+    mx = max_rounds if max_rounds is not None else _ai_max_question_steps(post)
+    st = next_step if next_step is not None else max(1, len(prev_questions) + 1)
+    nps = _narrow_pairwise_subset_penalty(
+        candidate, post, prev_questions, next_step=st, max_rounds=mx
+    )
+    if nps:
+        penalties["narrow_pairwise_subset"] = nps
+        total += nps
     return total, penalties
 
 
@@ -1777,9 +2001,17 @@ def question_should_reject(
     last_answer: str | None,
     *,
     is_first_question: bool = False,
+    next_step: int | None = None,
+    max_rounds: int | None = None,
 ) -> bool:
     s, _ = question_rejection_penalties(
-        candidate, post, prev_questions, last_answer, is_first_question=is_first_question
+        candidate,
+        post,
+        prev_questions,
+        last_answer,
+        is_first_question=is_first_question,
+        next_step=next_step,
+        max_rounds=max_rounds,
     )
     return s >= QUESTION_REJECT_SCORE_THRESHOLD
 
@@ -1976,6 +2208,10 @@ __all__ = [
     "_ai_simple_menu_user_suffix",
     "_ai_question_context_suffix",
     "_ai_no_tournament_user_suffix",
+    "_answer_is_skip",
+    "_skip_answer_pivot_suffix",
+    "_question_is_narrow_pairwise_subset",
+    "_question_covers_all_options_broadly",
     "_question_pits_multiple_named_options",
     "_recent_named_option_comparison_count",
     "_should_avoid_named_option_comparison",

@@ -3,8 +3,17 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useState } from "react";
+import { AuthField } from "@/components/auth/AuthField";
+import { AuthFormShell } from "@/components/auth/AuthFormShell";
+import { AuthNotice } from "@/components/auth/AuthNotice";
+import { SocialLoginButtons } from "@/components/auth/SocialLoginButtons";
 import { API_BASE_URL } from "@/lib/config";
-import { setStoredToken } from "@/lib/auth-storage";
+import { notifyAuthSessionChanged, setStoredToken } from "@/lib/auth-storage";
+import {
+  AUTH_ACTION_FORGOT,
+  AUTH_ACTION_REGISTER,
+  AUTH_BTN_PRIMARY,
+} from "@/lib/auth-form-classes";
 import { fetchWithTimeout, isAbortError } from "@/lib/fetch-with-timeout";
 
 function LoginForm() {
@@ -30,18 +39,19 @@ function LoginForm() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data.detail || "로그인에 실패했습니다.");
+        throw new Error(data.detail || "이메일 또는 비밀번호를 확인해 주세요.");
       }
       setStoredToken(data.access_token);
+      notifyAuthSessionChanged();
       router.push("/");
       router.refresh();
     } catch (err) {
       if (isAbortError(err)) {
         setError(
-          "서버 응답이 없습니다. 백엔드(8000)와 DB 연결을 확인해 주세요."
+          "서버에 연결할 수 없어요. 백엔드가 실행 중인지 확인해 주세요."
         );
       } else {
-        setError(err instanceof Error ? err.message : "로그인 실패");
+        setError(err instanceof Error ? err.message : "로그인에 실패했습니다.");
       }
     } finally {
       setLoading(false);
@@ -49,74 +59,65 @@ function LoginForm() {
   };
 
   return (
-    <main className="mx-auto w-full max-w-md">
-      <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">
-        <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-white">
-          로그인
-        </h1>
-        <p className="mt-2 text-sm text-zinc-600 dark:text-[#AFC6D8]">
-        계정이 없으면{" "}
-          <Link href="/register" className="text-indigo-700 hover:underline dark:text-indigo-200">
+    <AuthFormShell
+      title="로그인"
+      lead="고민 글쓰기, 투표, AI 대화를 이어가려면 로그인해 주세요."
+      banner={
+        registered ? (
+          <AuthNotice variant="success">
+            회원가입이 완료되었어요. 이제 로그인하면 됩니다.
+          </AuthNotice>
+        ) : null
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <AuthField
+          id="login-email"
+          label="이메일"
+          type="email"
+          autoComplete="email"
+          placeholder="you@example.com"
+          value={email}
+          onChange={setEmail}
+          required
+        />
+
+        <div>
+          <label htmlFor="login-password" className="text-sm font-medium text-zinc-800 dark:text-[#d8e4ef]">
+            비밀번호
+          </label>
+          <input
+            id="login-password"
+            type="password"
+            autoComplete="current-password"
+            placeholder="비밀번호 입력"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            className="mt-1.5 w-full rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-300/60 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/50 dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
+          />
+        </div>
+
+        {error ? <AuthNotice variant="error">{error}</AuthNotice> : null}
+
+        <button type="submit" disabled={loading} className={AUTH_BTN_PRIMARY}>
+          {loading ? "로그인 중..." : "로그인"}
+        </button>
+
+        <div className="grid grid-cols-2 gap-2.5 pt-1">
+          <Link href="/forgot-password" className={AUTH_ACTION_FORGOT}>
+            비밀번호 찾기
+          </Link>
+          <Link href="/register" className={AUTH_ACTION_REGISTER}>
             회원가입
           </Link>
-        </p>
+        </div>
+      </form>
 
-      {registered && (
-        <p
-          className="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200"
-        >
-          회원가입이 완료되었습니다. 로그인해 주세요.
-        </p>
-      )}
-
-        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-          <label className="block text-sm font-medium text-zinc-700 dark:text-[#AFC6D8]">
-            이메일
-            <input
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30"
-            />
-          </label>
-          <label className="block text-sm font-medium text-zinc-700 dark:text-[#AFC6D8]">
-            비밀번호
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:placeholder:text-sky-500/70 dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30"
-            />
-          </label>
-
-        {error && (
-            <p className="text-sm text-red-700 dark:text-red-200">{error}</p>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading}
-            className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-indigo-500/90 dark:hover:bg-indigo-400/90"
-        >
-          {loading ? "처리 중..." : "로그인"}
-        </button>
-        </form>
-
-        <p className="mt-5 text-sm text-zinc-600 dark:text-[#AFC6D8]">
-          <Link href="/forgot-password" className="text-indigo-700 hover:underline dark:text-indigo-200">
-            비밀번호를 잊었나요?
-          </Link>
-          {" · "}
-          <Link href="/" className="text-zinc-600 hover:underline dark:text-sky-300/80">
-            ← 홈으로
-          </Link>
-        </p>
+      <div className="mt-6">
+        <SocialLoginButtons />
       </div>
-    </main>
+    </AuthFormShell>
   );
 }
 
@@ -124,10 +125,8 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <main className="mx-auto w-full max-w-md">
-          <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A] dark:text-[#AFC6D8]">
-            로딩 중...
-          </div>
+        <main className="mx-auto w-full max-w-[26rem] py-8 text-center text-sm text-zinc-500 dark:text-[#9bb3c7]">
+          불러오는 중...
         </main>
       }
     >

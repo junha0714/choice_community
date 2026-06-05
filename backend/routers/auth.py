@@ -8,14 +8,29 @@ from sqlalchemy.orm import Session
 
 from auth import hash_password, verify_password, create_access_token
 from database import get_db
-from deps import get_current_user
-from models import User, PasswordResetToken
+from deps import get_current_user, get_user_for_token_refresh
+from models import (
+    User,
+    PasswordResetToken,
+    Post,
+    Comment,
+    Vote,
+    PostLike,
+    Notification,
+    AISession,
+    AISessionInteraction,
+    UserBlock,
+    Report,
+)
 from schemas import (
     UserRegister,
     UserLogin,
     TokenResponse,
     UserPublic,
     UserProfileUpdate,
+    UserSettingsResponse,
+    UserSettingsUpdate,
+    AccountDeleteBody,
     PasswordChangeBody,
     ForgotPasswordBody,
     ResetPasswordBody,
@@ -26,6 +41,23 @@ from app_helpers import _hash_reset_token, _expires_at_utc
 from settings import PASSWORD_RESET_DEBUG
 
 router = APIRouter(tags=["auth"])
+
+
+def _user_settings_from_model(user: User) -> UserSettingsResponse:
+    mode = (getattr(user, "default_ai_mode", None) or "quick").strip().lower()
+    if mode not in ("quick", "deep", "friend"):
+        mode = "quick"
+    return UserSettingsResponse(
+        default_ai_mode=mode,
+        default_ai_transcript_public=bool(
+            getattr(user, "default_ai_transcript_public", False)
+        ),
+        notify_comment=bool(getattr(user, "notify_comment", True)),
+        notify_reply=bool(getattr(user, "notify_reply", True)),
+        notify_like=bool(getattr(user, "notify_like", True)),
+        notify_vote_end=bool(getattr(user, "notify_vote_end", True)),
+    )
+
 
 @router.post("/auth/register", response_model=UserPublic)
 def register(body: UserRegister, db: Session = Depends(get_db)):
@@ -50,7 +82,12 @@ def register(body: UserRegister, db: Session = Depends(get_db)):
 def login(body: UserLogin, db: Session = Depends(get_db)):
     email = str(body.email).lower().strip()
     user = db.query(User).filter(User.email == email).first()
-    if not user or not verify_password(body.password, user.hashed_password):
+    if not user or not user.hashed_password:
+        raise HTTPException(
+            status_code=401,
+            detail="이메일 또는 비밀번호가 올바르지 않습니다.",
+        )
+    if not verify_password(body.password, user.hashed_password):
         raise HTTPException(
             status_code=401,
             detail="이메일 또는 비밀번호가 올바르지 않습니다.",
@@ -72,6 +109,18 @@ def auth_me(current_user: User = Depends(get_current_user)):
     return current_user
 
 
+@router.post("/auth/refresh", response_model=TokenResponse)
+def refresh_access_token(
+    current_user: User = Depends(get_user_for_token_refresh),
+):
+    """만료된 토큰도 grace 기간 내면 새 access token 발급."""
+    try:
+        token = create_access_token(user_id=current_user.id, email=current_user.email)
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return TokenResponse(access_token=token)
+
+
 @router.patch("/auth/me", response_model=UserPublic)
 def update_me(
     body: UserProfileUpdate,
@@ -83,17 +132,110 @@ def update_me(
     db.refresh(current_user)
     return current_user
 
+
+@router.get("/auth/me/settings", response_model=UserSettingsResponse)
+def get_my_settings(current_user: User = Depends(get_current_user)):
+    return _user_settings_from_model(current_user)
+
+
+@router.patch("/auth/me/settings", response_model=UserSettingsResponse)
+def update_my_settings(
+    body: UserSettingsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    data = body.model_dump(exclude_unset=True)
+    if not data:
+        return _user_settings_from_model(current_user)
+    if "default_ai_mode" in data and data["default_ai_mode"] is not None:
+        current_user.default_ai_mode = data["default_ai_mode"]
+    if "default_ai_transcript_public" in data:
+        current_user.default_ai_transcript_public = bool(
+            data["default_ai_transcript_public"]
+        )
+    for key in (
+        "notify_comment",
+        "notify_reply",
+        "notify_like",
+        "notify_vote_end",
+    ):
+        if key in data and data[key] is not None:
+            setattr(current_user, key, bool(data[key]))
+    db.commit()
+    db.refresh(current_user)
+    return _user_settings_from_model(current_user)
+
+
+@router.delete("/auth/me", response_model=MessageResponse)
+def delete_my_account(
+    body: AccountDeleteBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.hashed_password:
+        if not verify_password(body.password, current_user.hashed_password):
+            raise HTTPException(
+                status_code=400,
+                detail="비밀번호가 올바르지 않습니다.",
+            )
+    uid = current_user.id
+    now = datetime.now(timezone.utc)
+
+    db.query(Post).filter(Post.user_id == uid).update(
+        {Post.deleted_at: now},
+        synchronize_session=False,
+    )
+    db.query(Comment).filter(Comment.user_id == uid).update(
+        {Comment.deleted_at: now},
+        synchronize_session=False,
+    )
+
+    sess_ids = [
+        s[0]
+        for s in db.query(AISession.id).filter(AISession.user_id == uid).all()
+    ]
+    if sess_ids:
+        db.query(AISessionInteraction).filter(
+            AISessionInteraction.session_id.in_(sess_ids)
+        ).delete(synchronize_session=False)
+        db.query(AISession).filter(AISession.user_id == uid).delete(
+            synchronize_session=False
+        )
+
+    db.query(Notification).filter(Notification.user_id == uid).delete(
+        synchronize_session=False
+    )
+    db.query(Vote).filter(Vote.user_id == uid).delete(synchronize_session=False)
+    db.query(PostLike).filter(PostLike.user_id == uid).delete(
+        synchronize_session=False
+    )
+    db.query(UserBlock).filter(
+        (UserBlock.blocker_id == uid) | (UserBlock.blocked_id == uid)
+    ).delete(synchronize_session=False)
+    db.query(Report).filter(Report.reporter_id == uid).delete(
+        synchronize_session=False
+    )
+    db.query(PasswordResetToken).filter(
+        PasswordResetToken.user_id == uid
+    ).delete(synchronize_session=False)
+
+    db.delete(current_user)
+    db.commit()
+    return MessageResponse(message="회원 탈퇴가 완료되었습니다.")
+
+
 @router.patch("/auth/password", response_model=MessageResponse)
 def change_password(
     body: PasswordChangeBody,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not verify_password(body.current_password, current_user.hashed_password):
-        raise HTTPException(
-            status_code=400,
-            detail="현재 비밀번호가 올바르지 않습니다.",
-        )
+    if current_user.hashed_password:
+        if not verify_password(body.current_password, current_user.hashed_password):
+            raise HTTPException(
+                status_code=400,
+                detail="현재 비밀번호가 올바르지 않습니다.",
+            )
     current_user.hashed_password = hash_password(body.new_password)
     db.commit()
     return MessageResponse(message="비밀번호가 변경되었습니다.")

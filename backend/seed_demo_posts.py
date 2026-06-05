@@ -41,7 +41,7 @@ SAMPLES: list[dict] = [
     {
         "title": "점심 메뉴 뭐가 좋을까요?",
         "content": "회사 근처에서 빠르게 먹을 수 있는 메뉴를 고르고 있어요. 매일 같은 곳만 가서 고민이에요.",
-        "category": "음식·맛집",
+        "category": "음식·카페",
         "options": ["한식", "일식", "양식"],
         "tags": "점심,직장",
         "post_kind": "community",
@@ -49,7 +49,7 @@ SAMPLES: list[dict] = [
     {
         "title": "주말 데이트 코스 추천",
         "content": "비 오는 날에도 실내 위주로 돌아다닐 수 있는 코스가 있으면 좋겠어요.",
-        "category": "연애·관계",
+        "category": "연애·인간관계",
         "options": ["카페 투어", "전시·박물관", "영화관"],
         "tags": "데이트,주말",
         "post_kind": "community",
@@ -57,7 +57,7 @@ SAMPLES: list[dict] = [
     {
         "title": "첫 직장 이직 타이밍",
         "content": "입사 1년 차인데 성장은 있는지 잘 모르겠어요. 언제쯤 이직을 고민하면 될까요?",
-        "category": "직장·커리어",
+        "category": "진로·커리어",
         "options": ["지금 당장", "2~3년 후", "우선 연차 쌓기"],
         "tags": "이직,커리어",
         "post_kind": "community",
@@ -65,7 +65,7 @@ SAMPLES: list[dict] = [
     {
         "title": "운동 루틴 어떻게 잡을까요?",
         "content": "헬스 vs 러닝 vs 홈트 중에서 꾸준히 할 수 있는 걸 고르고 싶어요.",
-        "category": "운동·스포츠",
+        "category": "취미여가",
         "options": ["헬스", "러닝", "홈트"],
         "tags": "운동,루틴",
         "post_kind": "community",
@@ -73,7 +73,7 @@ SAMPLES: list[dict] = [
     {
         "title": "노트북 살 때 CPU vs RAM",
         "content": "개발용으로 쓸 건데 예산은 한정적이에요. 우선순위를 어떻게 두면 좋을까요?",
-        "category": "게임·디지털",
+        "category": "취미여가",
         "options": ["CPU 우선", "RAM 우선", "화질·디스플레이 우선"],
         "tags": "노트북,개발",
         "post_kind": "community",
@@ -89,7 +89,7 @@ SAMPLES: list[dict] = [
     {
         "title": "재테크 시작은 어디서?",
         "content": "적금만 하고 있는데 요즘 금리가 아쉬워요. 공격적으로 가도 될까요?",
-        "category": "금융·소비",
+        "category": "쇼핑·소비",
         "options": ["적금·예금 유지", "ETF 소액", "공부 더 하기"],
         "tags": "재테크,저축",
         "post_kind": "community",
@@ -98,7 +98,7 @@ SAMPLES: list[dict] = [
     {
         "title": "[AI] 번아웃 이후, 이직 vs 휴식",
         "content": "몇 달째 무기력하고 번아웃이 와요. 당장 이직을 준비할지, 아니면 짧게라도 쉴지 AI와 함께 정리해 보고 싶어요.",
-        "category": "직장·커리어",
+        "category": "진로·커리어",
         "options": ["이직 준비", "휴식/휴직", "현 직장 유지"],
         "tags": "ai,번아웃",
         "post_kind": "ai",
@@ -107,7 +107,7 @@ SAMPLES: list[dict] = [
     {
         "title": "[AI] 연애 3년 차, 다음 단계 고민",
         "content": "서로를 잘 알게 됐는데 결혼·동거·현상 유지 중 선택지가 막막해요. 선택지마다 장단점을 비교해 보고 싶어요.",
-        "category": "연애·관계",
+        "category": "연애·인간관계",
         "options": ["결혼 준비", "동거", "지금 관계 유지"],
         "tags": "ai,연애",
         "post_kind": "ai",
@@ -116,7 +116,7 @@ SAMPLES: list[dict] = [
     {
         "title": "[AI] 이사 vs 리모델링",
         "content": "예산은 한정적인데 살기 불편해요. 이사를 갈지, 집을 리모델링할지 AI와 질문을 나눠 보고 싶어요.",
-        "category": "집·인테리어",
+        "category": "주거·생활",
         "options": ["이사", "부분 리모델링", "1~2년 더 유지"],
         "tags": "ai,집",
         "post_kind": "ai",

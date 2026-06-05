@@ -149,9 +149,6 @@ export default function AdminPage() {
     return (
       <main className="mx-auto w-full max-w-4xl p-4">
         <p className="text-red-700 dark:text-red-200">{error}</p>
-        <Link href="/" className="mt-4 inline-block text-sm text-zinc-600 hover:underline dark:text-sky-300/80">
-          홈으로
-        </Link>
       </main>
     );
   }
@@ -160,8 +157,11 @@ export default function AdminPage() {
     <main className="mx-auto w-full max-w-4xl space-y-6 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-zinc-900 dark:text-white">관리자</h1>
-        <Link href="/" className="text-sm text-zinc-600 hover:underline dark:text-sky-300/80">
-          ← 홈
+        <Link
+          href="/write?category=%EA%B3%B5%EC%A7%80%EC%82%AC%ED%95%AD"
+          className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-500 dark:bg-amber-500 dark:hover:bg-amber-400"
+        >
+          공지 작성
         </Link>
       </div>
 

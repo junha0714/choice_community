@@ -4,7 +4,16 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from database import get_db
-from categories import ALLOWED_CATEGORIES
+from deps import get_current_user_optional
+from models import User
+from categories import (
+    ALLOWED_CATEGORIES,
+    BOARD_CATEGORIES,
+    CHOICE_CATEGORIES,
+    NOTICE_CATEGORY,
+    SUGGESTION_CATEGORY,
+    categories_for_auto_suggest,
+)
 from schemas import (
     CategoryAutoSuggestRequest,
     CategoryAutoSuggestResponse,
@@ -23,9 +32,23 @@ def root():
 
 
 @router.get("/meta/categories")
-def meta_categories():
-    """글 작성 시 선택 가능한 카테고리 목록."""
-    return {"categories": list(ALLOWED_CATEGORIES)}
+def meta_categories(
+    current_user: User | None = Depends(get_current_user_optional),
+):
+    """글 작성 시 선택 가능한 카테고리 목록 (공지는 관리자만)."""
+    is_admin = bool(current_user and getattr(current_user, "is_admin", False))
+    board = list(BOARD_CATEGORIES)
+    if not is_admin:
+        board = [c for c in board if c != NOTICE_CATEGORY]
+    categories = board + list(CHOICE_CATEGORIES)
+    return {
+        "categories": categories,
+        "board_categories": board,
+        "choice_categories": list(CHOICE_CATEGORIES),
+        "notice_category": NOTICE_CATEGORY,
+        "suggestion_category": SUGGESTION_CATEGORY,
+        "can_write_notice": is_admin,
+    }
 
 
 def _suggest_tags_ai(
@@ -151,7 +174,7 @@ def suggest_category_only(body: CategoryAutoSuggestRequest):
             disclaimer=_CATEGORY_AUTO_DISCLAIMER,
         )
 
-    cat_joined = " / ".join(ALLOWED_CATEGORIES)
+    cat_joined = " / ".join(categories_for_auto_suggest())
     system = (
         "너는 한국어 커뮤니티 고민 글의 분류만 고른다. "
         "제목·본문에 없는 사실은 지어내지 않는다. "
@@ -179,7 +202,7 @@ def suggest_category_only(body: CategoryAutoSuggestRequest):
         )
 
     cat_raw = _extract_text(data.get("category")).strip()
-    category = cat_raw if cat_raw in ALLOWED_CATEGORIES else "기타"
+    category = cat_raw if cat_raw in categories_for_auto_suggest() else "기타"
     return CategoryAutoSuggestResponse(
         category=category,
         disclaimer=_CATEGORY_AUTO_DISCLAIMER,
@@ -204,7 +227,7 @@ def suggest_options_category(body: PostDraftSuggestRequest):
             disclaimer=POST_DRAFT_SUGGEST_DISCLAIMER,
         )
 
-    cat_joined = " / ".join(ALLOWED_CATEGORIES)
+    cat_joined = " / ".join(categories_for_auto_suggest())
     system = (
         "너는 한국어 커뮤니티에서 사용자의 고민 글을 보고 투표 선택지와 분류를 제안하는 도우미다. "
         "제목과 본문에 없는 사실을 지어내지 말고, 추측은 과하지 않게 한다. "
@@ -260,7 +283,7 @@ def suggest_options_category(body: PostDraftSuggestRequest):
                 break
 
     cat_raw = _extract_text(data.get("category")).strip()
-    category = cat_raw if cat_raw in ALLOWED_CATEGORIES else "기타"
+    category = cat_raw if cat_raw in categories_for_auto_suggest() else "기타"
 
     return PostDraftSuggestResponse(
         options=opts,

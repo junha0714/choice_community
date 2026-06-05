@@ -2,33 +2,72 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
+import { TrendingUp } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { API_BASE_URL } from "@/lib/config";
+import { BOARD_CATEGORIES } from "@/lib/board-categories";
+import { CategoryLabel } from "@/components/CategoryLabel";
+import {
+  BOARD_PATH,
+  homeFeedHref,
+  resolveHomeFeed,
+  type HomeFeed,
+} from "@/lib/home-feed";
 
 type CategoryStat = { category: string; count: number };
-type PopularPost = {
+type TrendingPost = {
   id: number;
   title: string;
   category: string;
-  vote_count: number;
-};
-type PopularByViews = {
-  id: number;
-  title: string;
-  category: string;
-  view_count: number;
-};
-type RecentComment = {
-  id: number;
-  content: string;
-  post_id: number;
-  post_title: string;
-  author_nickname: string | null;
-  created_at: string;
 };
 
+type TrendingPostsBundle = {
+  by_votes: TrendingPost[];
+  by_views: TrendingPost[];
+  by_likes: TrendingPost[];
+};
+
+const TRENDING_SECTIONS: { key: keyof TrendingPostsBundle; label: string }[] = [
+  { key: "by_votes", label: "투표순" },
+  { key: "by_views", label: "조회순" },
+  { key: "by_likes", label: "좋아요순" },
+];
+
+function TrendingPostList({ posts }: { posts: TrendingPost[] }) {
+  if (posts.length === 0) {
+    return <p className="py-1 text-[11px] text-zinc-400 dark:text-[#AFC6D8]">아직 없어요</p>;
+  }
+  return (
+    <ul className="space-y-0.5 text-sm">
+      {posts.map((post, index) => (
+        <li key={post.id}>
+          <Link
+            href={`/posts/${post.id}`}
+            title={post.title}
+            className="group flex min-w-0 items-center gap-1.5 rounded-lg px-1 py-1 text-sm transition hover:bg-sky-50/80 dark:hover:bg-sky-950/40"
+          >
+            <span
+              className="w-4 shrink-0 text-right text-[11px] font-semibold tabular-nums text-sky-600/90 dark:text-sky-400/85"
+              aria-hidden
+            >
+              {index + 1}
+            </span>
+            <span className="min-w-0 truncate font-medium text-zinc-800 group-hover:text-sky-800 dark:text-sky-100 dark:group-hover:text-white">
+              {post.title}
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 const AUTH_PATHS = ["/login", "/register", "/forgot-password", "/reset-password"];
+
+/** 헤더(sticky) 아래에서 양쪽 사이드가 스크롤 시 따라옴 */
+const STICKY_SIDEBAR_CLASS =
+  "sticky z-20 top-[4.75rem] max-h-[calc(100dvh-5.25rem)] overflow-y-auto overscroll-y-contain pb-2 lg:top-[5rem] xl:top-[5.25rem] 2xl:top-[5.5rem]";
 
 function SideCard({
   title,
@@ -42,7 +81,7 @@ function SideCard({
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-sky-300/60 bg-white/92 p-3.5 shadow-[0_10px_36px_-26px_rgba(2,132,199,0.2)] backdrop-blur-sm dark:border-sky-800/55 dark:bg-[#1B2733]/82 dark:shadow-sky-950/25 sm:p-4 md:p-4 lg:p-4 xl:p-5">
+    <div className="cc-card p-3.5 sm:p-4">
       <div className="flex items-start justify-between gap-2 border-b border-sky-100/90 pb-2.5 dark:border-[#223141]">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-white">
@@ -69,26 +108,20 @@ export function CommunityShell({ children }: { children: ReactNode }) {
   const hideShell = AUTH_PATHS.some((p) => pathname === p);
 
   const [categories, setCategories] = useState<CategoryStat[]>([]);
-  const [popular, setPopular] = useState<PopularPost[]>([]);
-  const [popularViews, setPopularViews] = useState<PopularByViews[]>([]);
-  const [recent, setRecent] = useState<RecentComment[]>([]);
+  const [trending, setTrending] = useState<TrendingPostsBundle | null>(null);
 
   useEffect(() => {
     if (hideShell) return;
     let cancelled = false;
     const load = async () => {
       try {
-        const [c, p, pv, r] = await Promise.all([
+        const [c, t] = await Promise.all([
           fetch(`${API_BASE_URL}/stats/categories`),
-          fetch(`${API_BASE_URL}/stats/popular-posts?limit=5`),
-          fetch(`${API_BASE_URL}/stats/popular-posts-by-views?limit=5`),
-          fetch(`${API_BASE_URL}/stats/recent-comments?limit=5`),
+          fetch(`${API_BASE_URL}/stats/trending-posts?limit=5`),
         ]);
         if (cancelled) return;
         if (c.ok) setCategories(await c.json());
-        if (p.ok) setPopular(await p.json());
-        if (pv.ok) setPopularViews(await pv.json());
-        if (r.ok) setRecent(await r.json());
+        if (t.ok) setTrending(await t.json());
       } catch {
         /* ignore */
       }
@@ -103,272 +136,163 @@ export function CommunityShell({ children }: { children: ReactNode }) {
     return <>{children}</>;
   }
 
-  const activeCategory = searchParams.get("category");
+  const onBoard = pathname === BOARD_PATH;
+  const activeCategory = onBoard ? searchParams.get("category") : null;
+  const feed = onBoard
+    ? resolveHomeFeed(searchParams.get("feed"), activeCategory)
+    : ("choice" as HomeFeed);
 
-  const popularVoteCard = (
+  const trendingPopularCard = (
     <SideCard
-      title="실시간 인기 고민"
-      subtitle="지금 많이 참여하는 글"
-      icon={
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden>
-          <path
-            d="M13 3S6 10 6 14a6 6 0 0 0 12 0c0-4-5-11-5-11Z"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinejoin="round"
-          />
-          <path
-            d="M10 15.2c.4 1.4 1.4 2.3 2.8 2.5"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-          />
-        </svg>
-      }
+      title="실시간 인기 고민글"
+      subtitle="전체 기간"
+      icon={<TrendingUp className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden />}
     >
-      <ol className="space-y-2.5 text-sm">
-        {popular.length === 0 ? (
-          <li className="text-sm text-zinc-400 dark:text-[#AFC6D8]">아직 없어요</li>
-        ) : (
-          popular.map((post, i) => (
-            <li key={post.id}>
-              <Link
-                href={`/posts/${post.id}`}
-                className={[
-                  "group relative block rounded-xl border border-transparent px-2.5 py-2 transition",
-                  "hover:border-sky-200/85 hover:bg-sky-50/70",
-                  "dark:hover:border-sky-800/70 dark:hover:bg-sky-950/35",
-                ].join(" ")}
-              >
-                <div className="flex items-start gap-2.5">
-                  <span
-                    className={[
-                      "mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold tabular-nums ring-1 ring-inset",
-                      i === 0
-                        ? "bg-amber-100 text-amber-950 ring-amber-200/80 dark:bg-amber-500/15 dark:text-amber-100 dark:ring-amber-400/20"
-                        : i === 1
-                          ? "bg-slate-100 text-slate-900 ring-slate-200/80 dark:bg-slate-400/10 dark:text-slate-100 dark:ring-slate-400/20"
-                          : i === 2
-                            ? "bg-orange-100 text-orange-950 ring-orange-200/80 dark:bg-orange-500/15 dark:text-orange-100 dark:ring-orange-400/20"
-                            : "bg-zinc-100 text-zinc-600 ring-zinc-200/80 dark:bg-zinc-800/70 dark:text-sky-200/80 dark:ring-sky-800/60",
-                    ].join(" ")}
-                    aria-label={`${i + 1}위`}
-                  >
-                    {i + 1}
-                  </span>
-                  <div className="min-w-0">
-                    <div className="line-clamp-2 font-semibold text-zinc-800 transition-colors group-hover:text-sky-800 dark:text-sky-100 dark:group-hover:text-white">
-                      {post.title}
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-400 dark:text-[#AFC6D8]">
-                      <span className="truncate">{post.category}</span>
-                      <span aria-hidden className="text-zinc-300 dark:text-sky-800/80">
-                        ·
-                      </span>
-                      <span className="tabular-nums">{post.vote_count}표</span>
-                    </div>
-                  </div>
-                </div>
-              </Link>
-            </li>
-          ))
-        )}
-      </ol>
+      <div className="space-y-3">
+        {TRENDING_SECTIONS.map(({ key, label }, i) => (
+          <div
+            key={key}
+            className={
+              i > 0
+                ? "border-t border-sky-100/90 pt-3 dark:border-[#223141]"
+                : undefined
+            }
+          >
+            <h3 className="text-[11px] font-semibold text-sky-700/90 dark:text-sky-300/85">
+              {label}
+            </h3>
+            <div className="mt-1">
+              <TrendingPostList posts={trending?.[key] ?? []} />
+            </div>
+          </div>
+        ))}
+      </div>
     </SideCard>
   );
 
-  const popularViewsCard = (
-    <SideCard
-      title="지금 많이 보는 글"
-      subtitle="조회수 기준"
-      icon={
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden>
-          <path
-            d="M2.5 12s3.5-7 9.5-7 9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7Z"
-            stroke="currentColor"
-            strokeWidth="1.6"
-          />
-          <path
-            d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
-            stroke="currentColor"
-            strokeWidth="1.6"
-          />
-        </svg>
-      }
-    >
-      <ol className="space-y-2.5 text-sm">
-        {popularViews.length === 0 ? (
-          <li className="text-sm text-zinc-400 dark:text-[#AFC6D8]">아직 없어요</li>
-        ) : (
-          popularViews.map((post, i) => (
-            <li key={`v-${post.id}`}>
-              <Link
-                href={`/posts/${post.id}`}
-                className="group block rounded-xl border border-transparent px-2.5 py-2 transition hover:border-sky-200/85 hover:bg-sky-50/70 dark:hover:border-sky-800/70 dark:hover:bg-sky-950/35"
-              >
-                <div className="flex items-start gap-2.5">
-                  <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-[11px] font-bold text-zinc-600 ring-1 ring-inset ring-zinc-200/80 dark:bg-zinc-800/70 dark:text-sky-200/80 dark:ring-sky-800/60">
-                    {i + 1}
-                  </span>
-                  <div className="min-w-0">
-                    <div className="line-clamp-2 font-semibold text-zinc-800 transition-colors group-hover:text-sky-800 dark:text-sky-100 dark:group-hover:text-white">
-                      {post.title}
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-400 dark:text-[#AFC6D8]">
-                      <span className="truncate">{post.category}</span>
-                      <span aria-hidden className="text-zinc-300 dark:text-sky-800/80">
-                        ·
-                      </span>
-                      <span className="tabular-nums">조회 {post.view_count}</span>
-                    </div>
-                  </div>
-                </div>
-              </Link>
-            </li>
-          ))
-        )}
-      </ol>
-    </SideCard>
-  );
-
-  const recentCommentsCard = (
-    <SideCard
-      title="최근 댓글"
-      subtitle="방금 달린 이야기"
-      icon={
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden>
-          <path
-            d="M6 18l-2 3V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H6Z"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinejoin="round"
-          />
-          <path
-            d="M8 8.5h8M8 12h6"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-          />
-        </svg>
-      }
-    >
-      <ul className="space-y-3 text-sm">
-        {recent.length === 0 ? (
-          <li className="text-sm text-zinc-400 dark:text-[#AFC6D8]">아직 없어요</li>
-        ) : (
-          recent.map((c) => (
-            <li
-              key={c.id}
-              className="rounded-xl border border-transparent px-2.5 py-2 transition hover:border-sky-200/85 hover:bg-sky-50/70 dark:hover:border-sky-800/70 dark:hover:bg-sky-950/35"
-            >
-              <Link
-                href={`/posts/${c.post_id}`}
-                className="line-clamp-2 cursor-pointer font-medium text-zinc-800 transition-colors hover:text-sky-800 dark:text-sky-100 dark:hover:text-white"
-              >
-                {c.content}
-              </Link>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] leading-relaxed text-zinc-400 dark:text-[#AFC6D8]">
-                <span className="line-clamp-1 max-w-[18rem] text-zinc-500 dark:text-[#9bb3c7]">
-                  {c.post_title}
-                </span>
-                {c.author_nickname ? (
-                  <>
-                    <span aria-hidden className="text-zinc-300 dark:text-sky-800/80">
-                      ·
-                    </span>
-                    <span>{c.author_nickname}</span>
-                  </>
-                ) : null}
-              </div>
-            </li>
-          ))
-        )}
-      </ul>
-    </SideCard>
-  );
-
-  const categoryLinkClass = (cat: string | null) => {
-    const isActive = (cat ?? null) === (activeCategory ?? null);
-    return [
+  const navLinkClass = (active: boolean, muted = false) =>
+    [
       "group flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 transition-colors",
-      isActive
+      active
         ? "bg-sky-200/80 text-sky-950 shadow-sm shadow-sky-900/5 dark:bg-sky-500/18 dark:text-white"
-        : "text-zinc-800 hover:bg-sky-100 hover:text-sky-950 dark:text-[#AFC6D8] dark:hover:bg-sky-950/45 dark:hover:text-white",
+        : muted
+          ? "text-zinc-500 hover:bg-zinc-100/90 hover:text-zinc-800 dark:text-[#8fa3b8] dark:hover:bg-zinc-800/40 dark:hover:text-[#E2E8F0]"
+          : "text-zinc-800 hover:bg-sky-100 hover:text-sky-950 dark:text-[#AFC6D8] dark:hover:bg-sky-950/45 dark:hover:text-white",
     ].join(" ");
-  };
+
+  const boardSet = new Set<string>(BOARD_CATEGORIES);
+  const choiceRows = categories.filter((row) => !boardSet.has(row.category));
+
+  const boardNavItems: { feed: HomeFeed; category: string }[] = [
+    { feed: "notice", category: "공지사항" },
+    { feed: "feedback", category: "건의게시판" },
+  ];
 
   const categoryNav = (
-    <nav className="flex flex-col gap-1 text-sm">
+    <nav className="flex flex-col gap-0.5 text-sm">
       <Link
-        href="/"
-        className={categoryLinkClass(null)}
+        href={homeFeedHref("choice")}
+        className={navLinkClass(onBoard && feed === "choice" && !activeCategory)}
       >
-        <span className="truncate">전체</span>
+        <span className="truncate font-medium">전체</span>
       </Link>
-      {categories.map((row) => (
+      {choiceRows.map((row) => (
         <Link
           key={row.category}
-          href={`/?category=${encodeURIComponent(row.category)}`}
-          className={categoryLinkClass(row.category)}
+          href={homeFeedHref("choice", { category: row.category })}
+          className={navLinkClass(
+            onBoard && feed === "choice" && activeCategory === row.category
+          )}
         >
-          <span className="truncate font-medium dark:font-semibold">{row.category}</span>
-          <span className="shrink-0 rounded-md bg-zinc-100/90 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-500 transition-colors group-hover:bg-sky-100 group-hover:text-sky-900 dark:bg-[#16202A] dark:text-[#AFC6D8] dark:group-hover:bg-sky-950/60 dark:group-hover:text-white">
-            {row.count}
+          <span className="truncate font-medium dark:font-semibold">
+            <CategoryLabel category={row.category} />
+          </span>
+        </Link>
+      ))}
+      <div
+        className="my-1.5 border-t border-zinc-200/70 dark:border-[#334155]"
+        role="separator"
+      />
+      {boardNavItems.map((item) => (
+        <Link
+          key={item.feed}
+          href={homeFeedHref(item.feed)}
+          className={navLinkClass(onBoard && feed === item.feed, true)}
+        >
+          <span className="truncate font-medium">
+            <CategoryLabel category={item.category} />
           </span>
         </Link>
       ))}
     </nav>
   );
 
+  const mobileNavPill = (
+    href: string,
+    label: ReactNode,
+    active: boolean,
+    muted = false
+  ) => (
+    <Link
+      href={href}
+      className={[
+        "rounded-full border px-3 py-1.5 text-xs transition",
+        active
+          ? "border-sky-500 bg-sky-100 font-medium text-sky-950 dark:border-sky-500 dark:bg-sky-950/60 dark:text-sky-50"
+          : muted
+            ? "border-zinc-200/90 bg-zinc-50/90 text-zinc-500 hover:border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-400"
+            : "border-sky-200/80 bg-white text-zinc-600 hover:border-sky-400 dark:border-sky-800/70 dark:bg-zinc-900/80 dark:text-sky-300",
+      ].join(" ")}
+    >
+      {label}
+    </Link>
+  );
+
   return (
     <div className="flex w-full flex-col gap-6 sm:gap-7 md:gap-8 lg:gap-10 xl:gap-11 2xl:gap-12">
-      <div className="grid w-full grid-cols-1 gap-5 sm:gap-6 md:gap-7 lg:grid-cols-[minmax(220px,240px)_minmax(0,1fr)_minmax(200px,240px)] lg:items-start lg:gap-8 xl:grid-cols-[minmax(230px,250px)_minmax(0,1fr)_minmax(210px,230px)] xl:gap-9 2xl:grid-cols-[minmax(235px,260px)_minmax(0,1fr)_minmax(220px,240px)] 2xl:gap-10">
-        <aside className="hidden lg:block">
-          <div className="sticky top-20 lg:top-24 xl:top-24 2xl:top-28">
-            <SideCard title="카테고리">{categoryNav}</SideCard>
+      <div className="grid w-full grid-cols-1 gap-5 sm:gap-6 md:gap-7 lg:grid-cols-[minmax(200px,220px)_minmax(0,1fr)_minmax(240px,280px)] lg:gap-7 xl:grid-cols-[minmax(200px,220px)_minmax(0,1fr)_minmax(256px,300px)] xl:gap-8">
+        <aside className="hidden lg:block lg:min-h-0">
+          <div className={STICKY_SIDEBAR_CLASS}>
+            <SideCard title="게시판">{categoryNav}</SideCard>
           </div>
         </aside>
 
         <div className="min-w-0">{children}</div>
 
-        <aside className="hidden lg:block">
-          <div className="sticky top-20 space-y-4 lg:top-24 lg:space-y-5 xl:space-y-6 2xl:top-28 2xl:space-y-6">
-            {popularVoteCard}
-            {popularViewsCard}
-            {recentCommentsCard}
+        <aside className="hidden lg:block lg:min-h-0">
+          <div className={`${STICKY_SIDEBAR_CLASS} space-y-4 lg:space-y-5 xl:space-y-6`}>
+            {trendingPopularCard}
           </div>
         </aside>
       </div>
 
-      <div className="rounded-2xl border border-sky-200/70 bg-white/82 p-4 shadow-sm shadow-sky-900/5 backdrop-blur-sm dark:border-sky-800/55 dark:bg-zinc-950/65 sm:p-5 md:p-5 lg:hidden">
-        <h2 className="text-sm font-semibold text-zinc-800 dark:text-sky-100">카테고리</h2>
+      <div className="cc-card p-4 sm:p-5 lg:hidden">
+        <h2 className="text-sm font-semibold text-zinc-800 dark:text-sky-100">게시판</h2>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Link
-            href="/"
-            className="rounded-full border border-transparent bg-zinc-100/90 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-sky-100/90 hover:text-sky-950 dark:bg-zinc-800/90 dark:text-sky-200 dark:hover:bg-sky-950/55 dark:hover:text-sky-50"
-          >
-            전체
-          </Link>
-          {categories.map((row) => (
-            <Link
-              key={row.category}
-              href={`/?category=${encodeURIComponent(row.category)}`}
-              className="rounded-full border border-sky-200/80 bg-white px-3 py-1.5 text-xs text-zinc-600 transition hover:border-sky-400 hover:bg-sky-50/90 hover:text-sky-950 dark:border-sky-800/70 dark:bg-zinc-900/80 dark:text-sky-300 dark:hover:border-sky-600 dark:hover:bg-sky-950/55 dark:hover:text-sky-50"
-            >
-              {row.category}
-              <span className="ml-1 tabular-nums text-zinc-400">
-                {row.count}
-              </span>
-            </Link>
-          ))}
+          {mobileNavPill(
+            homeFeedHref("choice"),
+            "전체",
+            onBoard && feed === "choice" && !activeCategory
+          )}
+          {choiceRows.map((row) =>
+            mobileNavPill(
+              homeFeedHref("choice", { category: row.category }),
+              <CategoryLabel category={row.category} />,
+              onBoard && feed === "choice" && activeCategory === row.category
+            )
+          )}
+          {boardNavItems.map((item) =>
+            mobileNavPill(
+              homeFeedHref(item.feed),
+              <CategoryLabel category={item.category} />,
+              onBoard && feed === item.feed,
+              true
+            )
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 md:grid-cols-3 md:gap-4 lg:hidden">
-        {popularVoteCard}
-        {popularViewsCard}
-        <div className="sm:col-span-2 md:col-span-3">{recentCommentsCard}</div>
-      </div>
+      <div className="lg:hidden">{trendingPopularCard}</div>
     </div>
   );
 }

@@ -1,4 +1,21 @@
 export const AUTH_TOKEN_STORAGE_KEY = "choice_community_access_token";
+export const AUTH_SESSION_EVENT = "choice-auth-session";
+
+/** 브라우저(탭)를 닫으면 사라지는 sessionStorage — PC/브라우저 껐다 켜면 다시 로그인 */
+function authStore(): Storage | null {
+  if (typeof window === "undefined") return null;
+  return window.sessionStorage;
+}
+
+/** 예전 localStorage 토큰(30일 유지) 제거 */
+export function purgeLegacyLocalToken(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 function decodeBase64Url(input: string): string {
   const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
@@ -7,7 +24,7 @@ function decodeBase64Url(input: string): string {
   return atob(padded);
 }
 
-function getJwtExpMs(token: string): number | null {
+export function getJwtExpMs(token: string): number | null {
   const parts = token.split(".");
   if (parts.length < 2) return null;
   try {
@@ -28,22 +45,40 @@ function getJwtExpMs(token: string): number | null {
   }
 }
 
+export function getStoredTokenRaw(): string | null {
+  const store = authStore();
+  if (!store) return null;
+  return store.getItem(AUTH_TOKEN_STORAGE_KEY);
+}
+
+/** API 호출용 — 만료 토큰은 null (삭제는 refresh 실패 시에만) */
 export function getStoredToken(): string | null {
-  if (typeof window === "undefined") return null;
-  const token = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+  const token = getStoredTokenRaw();
   if (!token) return null;
   const expMs = getJwtExpMs(token);
-  if (expMs != null && Date.now() >= expMs) {
-    localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
-    return null;
-  }
+  if (expMs != null && Date.now() >= expMs) return null;
   return token;
 }
 
+export function hasStoredSession(): boolean {
+  return !!getStoredTokenRaw();
+}
+
+export function notifyAuthSessionChanged(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(AUTH_SESSION_EVENT));
+}
+
 export function setStoredToken(token: string): void {
-  localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+  purgeLegacyLocalToken();
+  const store = authStore();
+  if (!store) return;
+  store.setItem(AUTH_TOKEN_STORAGE_KEY, token);
 }
 
 export function clearStoredToken(): void {
-  localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+  purgeLegacyLocalToken();
+  const store = authStore();
+  if (!store) return;
+  store.removeItem(AUTH_TOKEN_STORAGE_KEY);
 }

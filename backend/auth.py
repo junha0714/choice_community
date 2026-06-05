@@ -18,7 +18,9 @@ load_dotenv()
 
 SECRET_KEY = os.getenv("JWT_SECRET", "").strip()
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7일
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7일 (같은 브라우저 세션 안에서만 유지)
+# 같은 세션에서 토큰 만료 직후 /auth/refresh 허용 (브라우저 닫으면 sessionStorage 삭제됨)
+REFRESH_GRACE_DAYS = 1
 
 # bcrypt는 원문이 72바이트를 넘기면 안 됨 (UTF-8 기준)
 _MAX_PW_BYTES = 72
@@ -63,3 +65,22 @@ def decode_token(token: str) -> dict:
     if not SECRET_KEY:
         raise JWTError("JWT_SECRET 미설정")
     return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+
+def decode_token_for_refresh(token: str) -> dict:
+    """서명은 검증하되 만료는 REFRESH_GRACE_DAYS 이내면 허용."""
+    if not SECRET_KEY:
+        raise JWTError("JWT_SECRET 미설정")
+    payload = jwt.decode(
+        token,
+        SECRET_KEY,
+        algorithms=[ALGORITHM],
+        options={"verify_exp": False},
+    )
+    exp = payload.get("exp")
+    if isinstance(exp, (int, float)):
+        exp_dt = datetime.fromtimestamp(exp, tz=timezone.utc)
+        grace_start = datetime.now(timezone.utc) - timedelta(days=REFRESH_GRACE_DAYS)
+        if exp_dt < grace_start:
+            raise JWTError("refresh grace exceeded")
+    return payload

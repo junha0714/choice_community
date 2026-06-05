@@ -17,6 +17,7 @@ from models import Base
 from routers import admin as admin_router
 from routers import ai as ai_router
 from routers import auth as auth_router
+from routers import oauth as oauth_router
 from routers import meta as meta_router
 from routers import notifications as notifications_router
 from routers import posts as posts_router
@@ -30,7 +31,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 Base.metadata.create_all(bind=engine)
 run_schema_migrations()
 
-app = FastAPI()
+app = FastAPI(title="PickTalk API", description="PickTalk backend")
 
 # 브라우저 → 다른 포트/호스트의 API는 CORS 통과가 필요합니다.
 # - 로컬: localhost / 127.0.0.1 / [::1] + 임의 포트(Next dev 포트 변경 대비)
@@ -60,6 +61,7 @@ app.add_middleware(
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 app.include_router(auth_router.router)
+app.include_router(oauth_router.router)
 app.include_router(meta_router.router)
 app.include_router(stats_router.router)
 app.include_router(posts_router.router)

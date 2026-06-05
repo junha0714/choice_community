@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -14,6 +15,14 @@ import { jsonAuthHeaders } from "@/lib/auth-headers";
 import { PostBody } from "@/components/PostBody";
 import { tryNavigateToWrite } from "@/lib/require-login-for-write";
 import { AiReasonDisplay } from "@/components/AiReasonDisplay";
+import {
+  isBoardCategory,
+  isNoticeCategory,
+  isSuggestionCategory,
+} from "@/lib/board-categories";
+import { CategoryLabel } from "@/components/CategoryLabel";
+import { TagChip } from "@/components/TagChip";
+import { formatPostDateLabel } from "@/lib/format-datetime";
 
 type Post = {
   id: number;
@@ -34,6 +43,9 @@ type Post = {
   author_nickname?: string | null;
   created_at: string;
   is_hidden?: boolean;
+  is_published?: boolean;
+  is_notice?: boolean;
+  is_board_post?: boolean;
   tags?: string[];
   vote_deadline_at?: string | null;
 };
@@ -89,6 +101,7 @@ type Comment = {
   post_id: number;
   user_id?: number | null;
   author_nickname?: string | null;
+  is_anonymous?: boolean;
   parent_id?: number | null;
   reply_count?: number;
   created_at: string;
@@ -139,24 +152,16 @@ function postAuthorLabel(post: Post): string {
   return "익명";
 }
 
-function commentAuthorLabel(c: Comment): string {
+function commentAuthorLabel(c: Comment, meId?: number | null): string {
+  if (c.is_anonymous) {
+    if (meId != null && c.user_id != null && c.user_id === meId) return "익명 (나)";
+    return "익명";
+  }
   if (c.author_nickname) return c.author_nickname;
   if (c.user_id != null) return `사용자 #${c.user_id}`;
   return "익명";
 }
 
-function formatCommentTime(iso: string) {
-  try {
-    return new Date(iso).toLocaleString("ko-KR", {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return "";
-  }
-}
 
 function stripMdLite(s: string): string {
   return s
@@ -505,8 +510,11 @@ export default function PostDetailPage() {
   const [postError, setPostError] = useState("");
   const [similarPosts, setSimilarPosts] = useState<SimilarPostBrief[]>([]);
   const [similarLoading, setSimilarLoading] = useState(false);
+  const [similarNextOffset, setSimilarNextOffset] = useState(0);
+  const [similarSpin, setSimilarSpin] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentInput, setCommentInput] = useState("");
+  const [commentAnonymous, setCommentAnonymous] = useState(false);
   const [voteCounts, setVoteCounts] = useState<VoteCount[]>([]);
   const [myVote, setMyVote] = useState<MyVote | null>(null);
   const [hasToken, setHasToken] = useState(false);
@@ -524,6 +532,8 @@ export default function PostDetailPage() {
   const [editCommentDraft, setEditCommentDraft] = useState("");
   const [replyToId, setReplyToId] = useState<number | null>(null);
   const [voteCloseLoading, setVoteCloseLoading] = useState(false);
+  const [publishLoading, setPublishLoading] = useState(false);
+  const viewCountedRef = useRef(false);
 
   const commentsByParent = useMemo(() => {
     const m = new Map<number | null, Comment[]>();
@@ -539,15 +549,21 @@ export default function PostDetailPage() {
     return m;
   }, [comments]);
 
-  const fetchPost = async () => {
+  const fetchPost = async (opts?: { countView?: boolean }) => {
     if (!params?.id) return;
     setPostLoading(true);
     setPostError("");
     try {
+      let countView = opts?.countView;
+      if (countView === undefined) {
+        countView = !viewCountedRef.current;
+        if (countView) viewCountedRef.current = true;
+      }
+      const qs = countView ? "" : "?count_view=false";
       const token = getStoredToken();
       const headers: HeadersInit = {};
       if (token) headers.Authorization = `Bearer ${token}`;
-      const res = await fetch(`${API_BASE_URL}/posts/${params.id}`, {
+      const res = await fetch(`${API_BASE_URL}/posts/${params.id}${qs}`, {
         headers,
       });
       if (!res.ok) {
@@ -589,28 +605,45 @@ export default function PostDetailPage() {
     setVoteCounts(data);
   };
 
-  const fetchSimilar = async () => {
+  const fetchSimilar = async (offset = 0) => {
     if (!params?.id) return;
     setSimilarLoading(true);
     try {
       const token = getStoredToken();
       const headers: HeadersInit = {};
       if (token) headers.Authorization = `Bearer ${token}`;
-      const res = await fetch(
-        `${API_BASE_URL}/posts/${params.id}/similar?limit=8`,
-        { headers }
-      );
-      const data = await res.json().catch(() => []);
-      if (res.ok && Array.isArray(data)) {
-        setSimilarPosts(data as SimilarPostBrief[]);
-      } else {
-        setSimilarPosts([]);
+
+      const loadAt = async (off: number) => {
+        const res = await fetch(
+          `${API_BASE_URL}/posts/${params.id}/similar?limit=4&offset=${off}`,
+          { headers }
+        );
+        const data = await res.json().catch(() => []);
+        if (!res.ok || !Array.isArray(data)) return [] as SimilarPostBrief[];
+        return data as SimilarPostBrief[];
+      };
+
+      let data = await loadAt(offset);
+      let usedOffset = offset;
+      if (data.length === 0 && offset > 0) {
+        data = await loadAt(0);
+        usedOffset = 0;
       }
+      setSimilarPosts(data);
+      setSimilarNextOffset(usedOffset + (data.length > 0 ? 4 : 0));
     } catch {
       setSimilarPosts([]);
+      setSimilarNextOffset(0);
     } finally {
       setSimilarLoading(false);
     }
+  };
+
+  const refreshSimilar = () => {
+    setSimilarSpin(true);
+    void fetchSimilar(similarNextOffset).finally(() => {
+      window.setTimeout(() => setSimilarSpin(false), 400);
+    });
   };
 
   const fetchMyVote = async () => {
@@ -652,11 +685,13 @@ export default function PostDetailPage() {
       body: JSON.stringify({
         content: commentInput,
         parent_id: replyToId ?? undefined,
+        is_anonymous: commentAnonymous,
       }),
     });
 
     if (res.ok) {
       setCommentInput("");
+      setCommentAnonymous(false);
       setReplyToId(null);
       fetchComments();
     } else {
@@ -929,15 +964,17 @@ export default function PostDetailPage() {
   };
 
   useEffect(() => {
+    viewCountedRef.current = false;
     setHasToken(!!getStoredToken());
     setAiState(null);
     setAiAnswer("");
     setAiError("");
+    setSimilarNextOffset(0);
     fetchPost();
     fetchComments();
     fetchVotes();
     fetchMyVote();
-    fetchSimilar();
+    fetchSimilar(0);
   }, [params?.id]);
 
   useEffect(() => {
@@ -1033,6 +1070,29 @@ export default function PostDetailPage() {
     aiState,
   ]);
 
+  const handlePublishDraft = async () => {
+    if (!params?.id || !post) return;
+    if (!getStoredToken()) {
+      router.push("/login");
+      return;
+    }
+    setPublishLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/posts/${params.id}/publish`, {
+        method: "POST",
+        headers: jsonAuthHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(typeof data.detail === "string" ? data.detail : "게시 실패");
+        return;
+      }
+      setPost(data as Post);
+    } finally {
+      setPublishLoading(false);
+    }
+  };
+
   const handleDeletePost = async () => {
     if (!params?.id) return;
     if (!getStoredToken()) {
@@ -1045,7 +1105,7 @@ export default function PostDetailPage() {
       headers: jsonAuthHeaders(),
     });
     if (res.ok) {
-      router.push("/");
+      router.push("/board");
       return;
     }
     const data = await res.json().catch(() => ({}));
@@ -1092,7 +1152,7 @@ export default function PostDetailPage() {
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
       alert("차단했습니다.");
-      fetchPost();
+      fetchPost({ countView: false });
       fetchComments();
     } else {
       alert(typeof data.detail === "string" ? data.detail : "차단 실패");
@@ -1212,6 +1272,14 @@ export default function PostDetailPage() {
     post.user_id != null &&
     post.user_id === meId;
   const isAiPost = (post.post_kind ?? "community") === "ai";
+  const isNoticePost =
+    post.is_notice === true || isNoticeCategory(post.category);
+  const isSuggestionPost = isSuggestionCategory(post.category);
+  const isBoardPost =
+    post.is_board_post === true ||
+    isBoardCategory(post.category) ||
+    isNoticePost ||
+    isSuggestionPost;
   const showAuthorAiUi = isAiPost && meResolved && isAuthor;
   const showPublicAiUi = isAiPost && meResolved && !isAuthor;
   const showPublicAiTranscript =
@@ -1237,19 +1305,13 @@ export default function PostDetailPage() {
 
   return (
     <main className="mx-auto w-full max-w-[min(100%,88rem)] space-y-3 px-2 pb-6 pt-3 sm:space-y-3.5 sm:px-3 sm:pb-7 sm:pt-4 md:space-y-4 md:px-4 lg:max-w-none lg:px-1 xl:px-2 2xl:px-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-white"
-        >
-          <span aria-hidden>←</span> 목록
-        </Link>
+      <div className="flex flex-wrap items-center justify-end gap-2 text-sm">
         <button
           type="button"
-          onClick={() => tryNavigateToWrite(router, "/write/ai")}
+          onClick={() => tryNavigateToWrite(router)}
           className="rounded-full px-3 py-1 font-medium text-sky-700 transition hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-950/40"
         >
-          고민 글쓰기
+          글쓰기
         </button>
       </div>
 
@@ -1259,6 +1321,30 @@ export default function PostDetailPage() {
             관리자에 의해 목록에서 숨겨진 글입니다. 작성자와 관리자만 이 페이지를 볼 수
             있어요.
           </p>
+        ) : null}
+        {isAuthor && post.is_published === false ? (
+          <div className="mb-4 rounded-xl border border-amber-200/90 bg-amber-50/80 px-3 py-3 text-sm text-amber-950 dark:border-amber-900/45 dark:bg-amber-950/25 dark:text-amber-100">
+            <p className="font-semibold">아직 게시되지 않은 임시저장 글이에요.</p>
+            <p className="mt-1 text-amber-900/90 dark:text-amber-100/85">
+              마이페이지에만 보이고, 게시판 목록에는 나오지 않아요.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handlePublishDraft()}
+                disabled={publishLoading}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-indigo-500/90 dark:hover:bg-indigo-400/90"
+              >
+                {publishLoading ? "게시 중..." : "게시하기"}
+              </button>
+              <Link
+                href="/mypage"
+                className="rounded-lg border border-amber-300/80 bg-white px-3 py-2 text-sm font-semibold text-amber-950 hover:bg-amber-50 dark:border-amber-800/60 dark:bg-[#16202A] dark:text-amber-100 dark:hover:bg-amber-950/40"
+              >
+                마이페이지
+              </Link>
+            </div>
+          </div>
         ) : null}
 
         <div className="flex items-start justify-between gap-2.5">
@@ -1275,12 +1361,7 @@ export default function PostDetailPage() {
 
         <div className="mt-2 flex flex-wrap items-center gap-1">
           {(post.tags ?? []).map((t) => (
-            <span
-              key={t}
-              className="rounded bg-zinc-100/90 px-1.5 py-px text-[10px] font-normal text-zinc-600 dark:bg-white/5 dark:text-zinc-400"
-            >
-              #{t}
-            </span>
+            <TagChip key={t} tag={t} />
           ))}
           {(post.post_kind ?? "community") === "ai" ? (
             <span className="rounded-full bg-indigo-100/90 px-1.5 py-px text-[10px] font-medium text-indigo-800 dark:bg-indigo-500/15 dark:text-indigo-200">
@@ -1337,13 +1418,15 @@ export default function PostDetailPage() {
           <span className="shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden>
             ·
           </span>
-          <span
-            className="inline-flex min-w-0 max-w-[min(40vw,12rem)] shrink-0 items-center gap-1 truncate sm:max-w-[20rem]"
-            title={post.options}
-          >
-            <IconList className="h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
-            <span className="truncate">{post.options}</span>
-          </span>
+          {!isBoardPost && post.options.trim() ? (
+            <span
+              className="inline-flex min-w-0 max-w-[min(40vw,12rem)] shrink-0 items-center gap-1 truncate sm:max-w-[20rem]"
+              title={post.options}
+            >
+              <IconList className="h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
+              <span className="truncate">{post.options}</span>
+            </span>
+          ) : null}
         </div>
 
         {meResolved &&
@@ -1440,34 +1523,43 @@ export default function PostDetailPage() {
                 recommended={effectiveAiRecommended}
                 reason={effectiveAiReason}
                 aiMode={post.ai_mode}
-                footer={
-                  !aiState || aiState.type === "result" ? (
-                    <button
-                      type="button"
-                      onClick={handleRestartAI}
-                      disabled={aiLoading}
-                      className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#2a3544] dark:bg-[#1B2733] dark:text-sky-100 dark:hover:bg-sky-950/30"
-                    >
-                      AI 다시 실행
-                    </button>
-                  ) : null
-                }
               />
               {(!!(post.ai_recommended ?? "").trim() ||
                 aiState?.type === "result") && (
-                <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-zinc-200/90 bg-zinc-50/70 px-2.5 py-2 dark:border-[#2a3544] dark:bg-[#141c26]">
-                  <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-zinc-800 dark:text-sky-100">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 shrink-0 rounded border-zinc-300 dark:border-[#223141]"
-                      checked={!post.ai_transcript_public}
-                      disabled={aiVisibilitySaving}
-                      onChange={(e) =>
-                        void handleAiTranscriptPublicChange(!e.target.checked)
-                      }
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-200/70 bg-sky-50/50 px-3 py-2.5 dark:border-sky-900/35 dark:bg-sky-950/20">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-zinc-800 dark:text-sky-100">
+                      AI 대화 공개
+                    </p>
+                    <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+                      {post.ai_transcript_public
+                        ? "다른 사람도 질문·답변 과정을 볼 수 있어요."
+                        : "질문·답변 과정은 나만 볼 수 있어요."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={post.ai_transcript_public}
+                    aria-label="AI 대화 공개 여부"
+                    disabled={aiVisibilitySaving}
+                    onClick={() =>
+                      void handleAiTranscriptPublicChange(!post.ai_transcript_public)
+                    }
+                    className={[
+                      "relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-60",
+                      post.ai_transcript_public
+                        ? "bg-sky-600 dark:bg-sky-500"
+                        : "bg-zinc-300 dark:bg-zinc-600",
+                    ].join(" ")}
+                  >
+                    <span
+                      className={[
+                        "inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform",
+                        post.ai_transcript_public ? "translate-x-6" : "translate-x-1",
+                      ].join(" ")}
                     />
-                    <span>비공개</span>
-                  </label>
+                  </button>
                   {aiVisibilitySaving ? (
                     <span className="text-xs text-zinc-500">저장 중…</span>
                   ) : null}
@@ -1511,22 +1603,9 @@ export default function PostDetailPage() {
 
           {aiState?.type === "question" ? (
             <div className="mt-4 rounded-xl border border-zinc-200/90 bg-zinc-50/50 p-3 shadow-inner dark:border-[#2a3544] dark:bg-[#141c26]/80 sm:p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-[#8fa3b8]">
-                    진행 중
-                  </p>
-                  {aiTranscript.length === 0 ? (
-                    <p className="mt-2 text-base font-semibold leading-snug text-zinc-900 dark:text-white">
-                      Q{aiState.step}. {aiState.question}
-                    </p>
-                  ) : (
-                    <p className="mt-2 text-sm text-zinc-700 dark:text-[#AFC6D8]">
-                      아래 대화 중 마지막 질문에 답해 주세요.
-                    </p>
-                  )}
-                </div>
-              </div>
+              <p className="text-base font-semibold leading-snug text-zinc-900 dark:text-white">
+                {aiState.question}
+              </p>
 
               {aiTranscript.length > 0 ? (
                 <div className="mt-3 text-[13px] text-zinc-800 dark:text-[#AFC6D8]">
@@ -1553,9 +1632,6 @@ export default function PostDetailPage() {
               ) : null}
 
               <div className="mt-4 space-y-2.5">
-                <p className="text-xs text-zinc-500 dark:text-[#8fa3b8]">
-                  어려우면 &quot;모르겠어요&quot;, 질문 건너뛰기, 바로 추천만 받기를 써도 돼요.
-                </p>
                 <label className="block text-sm font-medium text-zinc-800 dark:text-white">
                   답변
                   <textarea
@@ -1591,7 +1667,7 @@ export default function PostDetailPage() {
                     disabled={aiLoading}
                     className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#2a3544] dark:bg-[#1B2733] dark:text-[#cbd5e1] dark:hover:bg-sky-950/35"
                   >
-                    이 질문 넘기기
+                    질문 건너뛰기
                   </button>
                   <button
                     type="button"
@@ -1599,7 +1675,7 @@ export default function PostDetailPage() {
                     disabled={aiLoading}
                     className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-950 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/60"
                   >
-                    여기서 끝내고 추천만
+                    바로 추천 받기
                   </button>
                   <button
                     type="button"
@@ -1616,6 +1692,24 @@ export default function PostDetailPage() {
         </section>
       ) : null}
 
+      {isBoardPost ? (
+        <section className={cardClass}>
+          <p className="text-sm text-zinc-800 dark:text-[#cbd5e1]">
+            {isNoticePost ? (
+              <span className="mr-2 inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-950 ring-1 ring-inset ring-amber-200/90 dark:bg-amber-500/15 dark:text-amber-100 dark:ring-amber-400/25">
+                공지
+              </span>
+            ) : (
+              <span className="mr-2 inline-flex rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-bold text-violet-950 ring-1 ring-inset ring-violet-200/90 dark:bg-violet-500/15 dark:text-violet-100 dark:ring-violet-400/25">
+                건의
+              </span>
+            )}
+            {isNoticePost
+              ? "운영 안내 글입니다. 선택지·투표 없이 댓글로 문의해 주세요."
+              : "건의·제안 글입니다. 선택지·투표 없이 댓글로 의견을 남겨 주세요."}
+          </p>
+        </section>
+      ) : !isAiPost ? (
       <section className={cardClass}>
         <div className="flex flex-wrap items-start justify-between gap-2 border-b border-zinc-200/80 pb-2.5 dark:border-[#334155]">
           <div className="min-w-0 flex-1">
@@ -1732,78 +1826,86 @@ export default function PostDetailPage() {
         )}
         </div>
       </section>
+      ) : null}
 
-      <section className={cardClass}>
-        <div className="flex flex-wrap items-end justify-between gap-2 border-b border-zinc-200/80 pb-2.5 dark:border-[#334155]">
-          <div>
-            <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">
-              비슷한 고민
-            </h2>
+      <section className="rounded-xl border border-sky-200/90 bg-linear-to-br from-sky-50/95 via-white to-cyan-50/60 p-3 shadow-md shadow-sky-900/8 ring-1 ring-sky-100/80 dark:border-sky-700/55 dark:from-sky-950/40 dark:via-[#16202A] dark:to-cyan-950/25 dark:shadow-sky-950/30 dark:ring-sky-900/40 sm:p-3.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-500/15 text-base dark:bg-sky-500/20"
+              aria-hidden
+            >
+              🔗
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-sm font-bold tracking-tight text-sky-950 dark:text-sky-50">
+                비슷한 고민
+              </h2>
+              <p className="text-[10px] font-medium text-sky-700/80 dark:text-sky-400/90">
+                같은 주제·태그 글을 추천해요
+              </p>
+            </div>
           </div>
-          <Link
-            href="/"
-            className="text-sm font-medium text-sky-700 transition hover:text-sky-800 dark:text-sky-300 dark:hover:text-sky-200"
+          <button
+            type="button"
+            onClick={refreshSimilar}
+            disabled={similarLoading}
+            title="다른 비슷한 고민 보기"
+            className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-sky-300/90 bg-white px-2 py-1 text-[11px] font-semibold text-sky-800 shadow-sm transition hover:border-sky-400 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-sky-600/60 dark:bg-sky-950/40 dark:text-sky-100 dark:hover:border-sky-500 dark:hover:bg-sky-900/50"
           >
-            더 보기
-          </Link>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              className={`h-3.5 w-3.5 ${similarSpin ? "animate-spin" : ""}`}
+              aria-hidden
+            >
+              <path
+                fillRule="evenodd"
+                d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466.75.75 0 11-1.299-.75 4 4 0 008.259-1.912.75.75 0 011.299.75 5.48 5.48 0 00-1.258 1.196zM4.688 8.576a5.5 5.5 0 019.201-2.466.75.75 0 011.299.75 4 4 0 01-8.259 1.912.75.75 0 01-1.299-.75 5.48 5.48 0 001.258-1.196z"
+                clipRule="evenodd"
+              />
+            </svg>
+            새로고침
+          </button>
         </div>
 
         {similarLoading ? (
-          <div className="mt-3 grid gap-2 sm:grid-cols-2 sm:gap-2.5">
-            <div className="h-[6.75rem] rounded-lg border border-zinc-200/80 bg-zinc-50/80 dark:border-[#223141] dark:bg-[#1B2733]" />
-            <div className="h-[6.75rem] rounded-lg border border-zinc-200/80 bg-zinc-50/80 dark:border-[#223141] dark:bg-[#1B2733]" />
-          </div>
+          <ul className="mt-2.5 list-none space-y-1.5 p-0">
+            {[0, 1, 2].map((i) => (
+              <li
+                key={i}
+                className="h-9 animate-pulse rounded-lg border border-sky-100/80 bg-white/70 dark:border-sky-900/50 dark:bg-[#1a2330]/70"
+              />
+            ))}
+          </ul>
         ) : similarPosts.length === 0 ? (
-          <p className="mt-3 text-sm text-zinc-500 dark:text-[#94a3b8]">
+          <p className="mt-2.5 rounded-lg border border-dashed border-sky-200/90 bg-white/60 px-3 py-2 text-xs text-sky-800/80 dark:border-sky-800/60 dark:bg-[#1a2330]/50 dark:text-sky-300/80">
             아직 비슷한 글을 찾지 못했어요.
           </p>
         ) : (
-          <ul className="mt-3 grid list-none gap-2 p-0 sm:grid-cols-2 sm:gap-2.5">
+          <ul className="mt-2.5 list-none space-y-1.5 p-0">
             {similarPosts.map((sp) => (
               <li key={sp.id}>
                 <Link
                   href={`/posts/${sp.id}`}
-                  className="group flex min-h-[6.75rem] flex-col rounded-lg border border-zinc-200/90 bg-white p-3 shadow-sm transition-all duration-150 hover:-translate-y-px hover:border-sky-400/70 hover:shadow-md dark:border-[#2a3544] dark:bg-[#16202A] dark:hover:border-sky-600/50 dark:hover:bg-[#1a2330]"
+                  className="group flex items-center gap-2 rounded-lg border border-sky-100/90 bg-white/90 px-2.5 py-2 text-xs shadow-sm transition hover:border-sky-300 hover:bg-sky-50/90 hover:shadow-md dark:border-sky-900/55 dark:bg-[#1a2330]/90 dark:hover:border-sky-600/70 dark:hover:bg-sky-950/40"
                 >
-                  <div className="flex min-h-0 flex-1 items-start gap-2">
-                    <p className="min-w-0 flex-1 line-clamp-2 text-sm font-semibold leading-snug text-zinc-900 transition-colors group-hover:text-sky-800 dark:text-white dark:group-hover:text-sky-200">
-                      {sp.title}
-                    </p>
-                    {(sp.post_kind ?? "community") === "ai" ? (
-                      <span className="shrink-0 rounded-full bg-indigo-100/90 px-1.5 py-px text-[10px] font-semibold text-indigo-800 dark:bg-[#2b1f4a] dark:text-indigo-100">
-                        AI
-                      </span>
-                    ) : (
-                      <span className="shrink-0 rounded-full bg-sky-100/90 px-1.5 py-px text-[10px] font-semibold text-sky-900 dark:bg-sky-950/50 dark:text-sky-200">
-                        투표
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-0.5 pt-2 text-[11px] text-zinc-600 dark:text-[#94a3b8]">
-                    <span className="font-medium text-sky-700 dark:text-sky-300">
-                      {sp.category}
+                  <span className="min-w-0 flex-1 truncate font-semibold text-zinc-900 group-hover:text-sky-800 dark:text-zinc-100 dark:group-hover:text-sky-200">
+                    {sp.title}
+                  </span>
+                  {(sp.post_kind ?? "community") === "ai" ? (
+                    <span className="shrink-0 rounded-md bg-indigo-500/15 px-1.5 py-0.5 text-[9px] font-bold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200">
+                      AI
                     </span>
-                    <span className="text-zinc-300 dark:text-zinc-600" aria-hidden>
-                      ·
+                  ) : (
+                    <span className="shrink-0 rounded-md bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-bold text-sky-800 dark:bg-sky-500/20 dark:text-sky-200">
+                      투표
                     </span>
-                    <span>조회 {sp.view_count ?? 0}</span>
-                    <span className="text-zinc-300 dark:text-zinc-600" aria-hidden>
-                      ·
-                    </span>
-                    <span>♥ {sp.like_count ?? 0}</span>
-                  </div>
-                  {(sp.tags ?? []).length > 0 ? (
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      {(sp.tags ?? []).slice(0, 4).map((t) => (
-                        <span
-                          key={t}
-                          className="rounded bg-zinc-100 px-1.5 py-px text-[10px] font-medium text-zinc-600 dark:bg-[#2a3642] dark:text-[#94a3b8]"
-                        >
-                          #{t}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
+                  )}
+                  <span className="hidden max-w-[5.5rem] shrink-0 truncate text-[10px] font-medium text-sky-700/90 sm:inline dark:text-sky-400">
+                    <CategoryLabel category={sp.category} />
+                  </span>
                 </Link>
               </li>
             ))}
@@ -1859,6 +1961,18 @@ export default function PostDetailPage() {
             style={{ minHeight: 72 }}
           />
 
+          {hasToken ? (
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+              <input
+                type="checkbox"
+                checked={commentAnonymous}
+                onChange={(e) => setCommentAnonymous(e.target.checked)}
+                className="h-4 w-4 rounded border-zinc-300 text-sky-700 focus:ring-sky-500 dark:border-zinc-600 dark:bg-zinc-900"
+              />
+              익명으로 작성
+            </label>
+          ) : null}
+
           <button
             type="button"
             onClick={handleCreateComment}
@@ -1911,6 +2025,28 @@ export default function PostDetailPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function CommentActionButton({
+  children,
+  onClick,
+  variant = "default",
+}: {
+  children: ReactNode;
+  onClick: () => void;
+  variant?: "default" | "danger";
+}) {
+  const base =
+    "rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors";
+  const styles =
+    variant === "danger"
+      ? `${base} text-zinc-500 hover:bg-red-50 hover:text-red-600 dark:text-zinc-400 dark:hover:bg-red-950/40 dark:hover:text-red-400`
+      : `${base} text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-200`;
+  return (
+    <button type="button" onClick={onClick} className={styles}>
+      {children}
+    </button>
   );
 }
 
@@ -1981,62 +2117,62 @@ function CommentThreadBlock({
         </div>
       ) : (
         <>
-          <p className="whitespace-pre-wrap text-zinc-800">{comment.content}</p>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
-            <span>{commentAuthorLabel(comment)}</span>
-            <span className="tabular-nums text-zinc-400">
-              {formatCommentTime(comment.created_at)}
+          <p className="whitespace-pre-wrap text-sm text-zinc-800 dark:text-zinc-200">
+            {comment.content}
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+            <span className="font-medium text-zinc-600 dark:text-zinc-300">
+              {commentAuthorLabel(comment, meId)}
+            </span>
+            <span aria-hidden>·</span>
+            <span className="tabular-nums">
+              {formatPostDateLabel(comment.created_at)}
             </span>
             {(comment.reply_count ?? 0) > 0 ? (
-              <span className="text-zinc-400">· 답글 {comment.reply_count}</span>
-            ) : null}
-            {hasToken && meResolved ? (
-              <button
-                type="button"
-                onClick={() => onReply(comment)}
-                className="text-indigo-600 hover:underline"
-              >
-                답글
-              </button>
-            ) : null}
-            {meResolved && isCommentAuthor ? (
               <>
-                <button
-                  type="button"
-                  onClick={() => onStartEdit(comment)}
-                  className="text-indigo-600 hover:underline"
-                >
-                  수정
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void onDelete(comment.id)}
-                  className="text-red-600 hover:underline"
-                >
-                  삭제
-                </button>
+                <span aria-hidden>·</span>
+                <span>답글 {comment.reply_count}</span>
               </>
             ) : null}
-            {meResolved &&
-            hasToken &&
-            !isCommentAuthor &&
-            comment.user_id != null &&
-            comment.user_id !== meId ? (
+            {hasToken && meResolved ? (
               <>
-                <button
-                  type="button"
-                  onClick={() => void onReport(comment.id)}
-                  className="text-zinc-600 hover:underline"
-                >
-                  신고
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void onBlock(comment.user_id!)}
-                  className="text-zinc-600 hover:underline"
-                >
-                  차단
-                </button>
+                <span
+                  className="mx-0.5 h-3 w-px shrink-0 bg-zinc-200 dark:bg-zinc-700"
+                  aria-hidden
+                />
+                <CommentActionButton onClick={() => onReply(comment)}>
+                  답글
+                </CommentActionButton>
+                {isCommentAuthor ? (
+                  <>
+                    <CommentActionButton onClick={() => onStartEdit(comment)}>
+                      수정
+                    </CommentActionButton>
+                    <CommentActionButton
+                      variant="danger"
+                      onClick={() => void onDelete(comment.id)}
+                    >
+                      삭제
+                    </CommentActionButton>
+                  </>
+                ) : (
+                  <>
+                    <CommentActionButton
+                      onClick={() => void onReport(comment.id)}
+                    >
+                      신고
+                    </CommentActionButton>
+                    {!comment.is_anonymous &&
+                    comment.user_id != null &&
+                    comment.user_id !== meId ? (
+                      <CommentActionButton
+                        onClick={() => void onBlock(comment.user_id!)}
+                      >
+                        차단
+                      </CommentActionButton>
+                    ) : null}
+                  </>
+                )}
               </>
             ) : null}
           </div>

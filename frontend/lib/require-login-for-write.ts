@@ -3,17 +3,15 @@ import { getStoredToken } from "@/lib/auth-storage";
 type AppRouter = { push: (href: string) => void };
 
 /**
- * 투표/AI 글쓰기 진입 전 로그인 여부 확인. 비로그인이면 안내 후 /login 으로 보냄.
+ * 글쓰기 진입 전 로그인 여부 확인. 비로그인이면 안내 후 /login 으로 보냄.
  */
-export function tryNavigateToWrite(router: AppRouter, path: "/write" | "/write/ai"): void {
+export function tryNavigateToWrite(router: AppRouter): void {
   if (!getStoredToken()) {
-    const kind =
-      path === "/write"
-        ? "AI 없이 투표 글을 올리려면 먼저 로그인해 주세요."
-        : "글쓰기를 이용하려면 먼저 로그인해 주세요.";
-    alert(`${kind}\n계정이 없으면 회원가입 후 로그인해 주세요.`);
+    alert(
+      "글쓰기를 이용하려면 먼저 로그인해 주세요.\n계정이 없으면 회원가입 후 로그인해 주세요."
+    );
     router.push("/login");
     return;
   }
-  router.push(path);
+  router.push("/write/ai");
 }

@@ -3,7 +3,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from sqlalchemy.orm import Session
 
-from auth import decode_token
+from auth import decode_token, decode_token_for_refresh
 from database import get_db
 from models import User
 
@@ -21,6 +21,28 @@ def get_current_user(
         user_id = int(payload.get("sub"))
     except (JWTError, ValueError, TypeError, KeyError):
         raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="사용자를 찾을 수 없습니다.")
+    if getattr(user, "is_banned", False):
+        raise HTTPException(status_code=403, detail="이용이 제한된 계정입니다.")
+    return user
+
+
+def get_user_for_token_refresh(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+) -> User:
+    token = credentials.credentials
+    try:
+        payload = decode_token_for_refresh(token)
+        user_id = int(payload.get("sub"))
+    except (JWTError, ValueError, TypeError, KeyError):
+        raise HTTPException(
+            status_code=401,
+            detail="로그인이 만료되었습니다. 다시 로그인해 주세요.",
+        )
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:

@@ -34,7 +34,9 @@ export default function EditPostPage() {
   const contentRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/meta/categories`)
+    const token = getStoredToken();
+    const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+    fetch(`${API_BASE_URL}/meta/categories`, { headers })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         const list: string[] = d?.categories ?? [];
@@ -52,7 +54,7 @@ export default function EditPostPage() {
     }
     setError("");
     setLoading(true);
-    fetch(`${API_BASE_URL}/posts/${params.id}`, {
+    fetch(`${API_BASE_URL}/posts/${params.id}?count_view=false`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => {
@@ -231,9 +233,6 @@ export default function EditPostPage() {
         <div className="rounded-xl border border-red-200 bg-white p-6 text-red-800 dark:border-red-900/50 dark:bg-[#16202A] dark:text-red-200">
           {error}
         </div>
-        <Link href="/" className="mt-4 inline-block text-sm text-zinc-600 hover:underline dark:text-sky-300/80">
-          ← 홈
-        </Link>
       </main>
     );
   }

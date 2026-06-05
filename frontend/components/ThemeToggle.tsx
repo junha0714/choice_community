@@ -11,7 +11,7 @@ import {
 } from "@/lib/theme-storage";
 
 export function ThemeToggle() {
-  const [preference, setPreference] = useState<ThemePreference>("light");
+  const [preference, setPreference] = useState<ThemePreference>("system");
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -29,6 +29,14 @@ export function ThemeToggle() {
       /* ignore */
     }
     applyThemeToDocument(preference);
+  }, [preference, mounted]);
+
+  useEffect(() => {
+    if (!mounted || preference !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => applyThemeToDocument("system");
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
   }, [preference, mounted]);
 
   const next = () => setPreference((p) => cycleTheme(p));
@@ -70,7 +78,19 @@ export function ThemeToggle() {
         </svg>
       );
     }
-    return null;
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        className="h-4 w-4 text-zinc-500 dark:text-zinc-300"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        aria-hidden
+      >
+        <rect x="2" y="3" width="20" height="14" rx="2" />
+        <path d="M8 21h8M12 17v4" strokeLinecap="round" />
+      </svg>
+    );
   };
 
   return (

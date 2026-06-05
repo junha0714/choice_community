@@ -2,14 +2,23 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, case, literal
+
+from categories import (
+    BOARD_CATEGORIES,
+    NOTICE_CATEGORY,
+    SUGGESTION_CATEGORY,
+    is_board_category,
+    is_notice_category,
+    is_suggestion_category,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import get_db
 from deps import get_current_user, get_current_user_optional
-from models import Post, Comment, Vote, PostLike, User
+from models import Post, Comment, Vote, PostLike, User, AISession, Notification
 from schemas import (
     PostCreate,
     PostUpdate,
@@ -30,6 +39,7 @@ from app_helpers import (
     _notify,
     _comment_reply_counts,
     _comment_to_response,
+    _get_blocked_ids,
     _nickname_map,
     _vote_deadline_passed,
     _post_to_response,
@@ -37,6 +47,7 @@ from app_helpers import (
     _get_post_or_404,
     _posts_list_query,
     _post_to_similar_brief,
+    _delete_ai_session,
 )
 
 router = APIRouter(tags=["posts"])
@@ -49,22 +60,41 @@ def create_post(
 ):
     ai_mode_val = None
     ai_steps_val = None
+    if is_notice_category(post.category):
+        if not getattr(current_user, "is_admin", False):
+            raise HTTPException(
+                status_code=403,
+                detail="공지사항은 관리자만 작성할 수 있어요.",
+            )
     if post.post_kind == "ai":
+        if is_notice_category(post.category) or is_suggestion_category(post.category):
+            raise HTTPException(
+                status_code=400,
+                detail="공지·건의 게시판에는 AI 글을 올릴 수 없어요.",
+            )
         ai_mode_val = post.ai_mode or "quick"
         ai_steps_val = post.ai_question_steps
 
     tags_csv = ",".join(post.tags) if post.tags else None
+    opts_csv = (
+        ""
+        if is_board_category(post.category)
+        else ",".join(post.options)
+    )
+    deadline = (
+        None if is_board_category(post.category) else post.vote_deadline_at
+    )
     new_post = Post(
         title=post.title,
         content=post.content,
         category=post.category,
-        options=",".join(post.options),  # 일단 문자열로 저장
+        options=opts_csv,
         user_id=current_user.id,
         post_kind=post.post_kind,
         ai_mode=ai_mode_val,
         ai_question_steps=ai_steps_val,
         tags=tags_csv,
-        vote_deadline_at=post.vote_deadline_at,
+        vote_deadline_at=deadline,
     )
 
     db.add(new_post)
@@ -80,6 +110,7 @@ def create_post(
 @router.get("/posts", response_model=PaginatedPosts)
 def get_posts(
     category: str | None = None,
+    feed: str | None = None,
     q: str | None = None,
     tag: str | None = None,
     sort: str = "latest",
@@ -98,8 +129,22 @@ def get_posts(
         sort = "latest"
 
     query = _posts_list_query(db, current_user)
-    if category:
-        query = query.filter(Post.category == category.strip())
+    cat = (category or "").strip()
+    feed_key = (feed or "").strip().lower()
+    if cat == NOTICE_CATEGORY:
+        feed_key = "notice"
+    elif cat == SUGGESTION_CATEGORY:
+        feed_key = "feedback"
+    elif cat:
+        feed_key = "choice"
+        query = query.filter(Post.category == cat)
+    elif feed_key == "notice":
+        query = query.filter(Post.category == NOTICE_CATEGORY)
+    elif feed_key == "feedback":
+        query = query.filter(Post.category == SUGGESTION_CATEGORY)
+    else:
+        # 기본 홈: 고민 글만 (공지·피드백 제외)
+        query = query.filter(~Post.category.in_(BOARD_CATEGORIES))
     query = _apply_post_search(query, q)
     if tag:
         t = tag.strip().lower()[:30]
@@ -177,6 +222,7 @@ def get_posts(
         liked_map = {p.id: p.id in liked_set for p in posts}
 
     comment_map: dict[int, int] = {}
+    vote_map: dict[int, int] = {}
     if posts:
         pids = [p.id for p in posts]
         rows = (
@@ -186,6 +232,13 @@ def get_posts(
             .all()
         )
         comment_map = {int(pid): int(cnt) for pid, cnt in rows if pid is not None}
+        vrows = (
+            db.query(Vote.post_id, func.count(Vote.id))
+            .filter(Vote.post_id.in_(pids))
+            .group_by(Vote.post_id)
+            .all()
+        )
+        vote_map = {int(pid): int(cnt) for pid, cnt in vrows if pid is not None}
 
     items = [
         _post_to_response(
@@ -193,6 +246,7 @@ def get_posts(
             nick_map,
             liked_by_me=liked_map.get(p.id) if current_user else None,
             comment_count=comment_map.get(p.id, 0),
+            vote_count=vote_map.get(p.id, 0),
         )
         for p in posts
     ]
@@ -223,17 +277,77 @@ def my_posts(
     return [_post_to_response(p, nick_map) for p in posts]
 
 
+@router.get("/posts/me/commented", response_model=list[PostResponse])
+def my_commented_posts(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """내가 댓글을 단 글 (최근 댓글 순 · 삭제·미게시 글 제외)"""
+    last_comments = (
+        db.query(
+            Comment.post_id.label("post_id"),
+            func.max(Comment.id).label("last_comment_id"),
+        )
+        .filter(
+            Comment.user_id == current_user.id,
+            Comment.deleted_at.is_(None),
+        )
+        .group_by(Comment.post_id)
+        .subquery()
+    )
+    posts = (
+        db.query(Post)
+        .join(last_comments, Post.id == last_comments.c.post_id)
+        .filter(
+            Post.deleted_at.is_(None),
+            func.coalesce(Post.is_published, True).is_(True),
+        )
+        .order_by(last_comments.c.last_comment_id.desc())
+        .all()
+    )
+    user_ids = {p.user_id for p in posts if p.user_id}
+    nick_map = _nickname_map(db, user_ids)
+    return [_post_to_response(p, nick_map) for p in posts]
+
+
 @router.get("/posts/{post_id}", response_model=PostResponse)
 def get_post(
     post_id: int,
+    count_view: bool = Query(True, description="false면 조회수를 올리지 않음"),
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
 ):
     post = _get_post_or_404(db, post_id, current_user)
 
-    post.view_count = (getattr(post, "view_count", None) or 0) + 1
-    db.commit()
-    db.refresh(post)
+    if (
+        current_user
+        and post.user_id == current_user.id
+        and _vote_deadline_passed(post)
+    ):
+        already = (
+            db.query(Notification.id)
+            .filter(
+                Notification.user_id == current_user.id,
+                Notification.post_id == post_id,
+                Notification.kind == "vote_closed",
+            )
+            .first()
+        )
+        if not already:
+            title_short = (post.title or "")[:80]
+            _notify(
+                db,
+                user_id=current_user.id,
+                kind="vote_closed",
+                title="투표가 마감되었어요",
+                body=f"글: {title_short}",
+                post_id=post_id,
+            )
+
+    if count_view:
+        post.view_count = (getattr(post, "view_count", None) or 0) + 1
+        db.commit()
+        db.refresh(post)
 
     ids = {post.user_id} if post.user_id else set()
     nick_map = _nickname_map(db, ids)
@@ -247,13 +361,30 @@ def get_post(
             is not None
         )
 
-    return _post_to_response(post, nick_map, liked_by_me=liked_by_me)
+    comment_count = (
+        db.query(func.count(Comment.id))
+        .filter(Comment.deleted_at.is_(None), Comment.post_id == post_id)
+        .scalar()
+        or 0
+    )
+    vote_count = (
+        db.query(func.count(Vote.id)).filter(Vote.post_id == post_id).scalar() or 0
+    )
+
+    return _post_to_response(
+        post,
+        nick_map,
+        liked_by_me=liked_by_me,
+        comment_count=int(comment_count),
+        vote_count=int(vote_count),
+    )
 
 
 @router.get("/posts/{post_id}/similar", response_model=list[SimilarPostBrief])
 def get_similar_posts(
     post_id: int,
     limit: int = 8,
+    offset: int = 0,
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
 ):
@@ -263,6 +394,7 @@ def get_similar_posts(
     - 삭제/숨김/차단 필터는 목록과 동일하게 적용
     """
     limit = min(max(int(limit or 8), 1), 20)
+    offset = max(int(offset or 0), 0)
     src = _get_post_or_404(db, post_id, current_user)
 
     base = _posts_list_query(db, current_user).filter(Post.id != src.id)
@@ -294,6 +426,7 @@ def get_similar_posts(
     rows = (
         base.add_columns(score_expr.label("score"))
         .order_by(func.coalesce(score_expr, 0).desc(), Post.id.desc())
+        .offset(offset)
         .limit(limit)
         .all()
     )
@@ -324,6 +457,17 @@ def toggle_post_like(
         db.add(PostLike(post_id=post_id, user_id=current_user.id))
         post.like_count = lc + 1
         liked = True
+        if post.user_id and post.user_id != current_user.id:
+            title_short = (post.title or "")[:80]
+            liker = (current_user.nickname or "").strip() or "누군가"
+            _notify(
+                db,
+                user_id=post.user_id,
+                kind="post_liked",
+                title="내 글에 좋아요가 달렸어요",
+                body=f"{liker} · 글: {title_short}",
+                post_id=post_id,
+            )
     db.commit()
     db.refresh(post)
 
@@ -363,6 +507,7 @@ def create_comment(
         post_id=post_id,
         user_id=current_user.id,
         parent_id=parent_id,
+        is_anonymous=bool(comment.is_anonymous),
     )
     db.add(new_comment)
     db.flush()
@@ -397,7 +542,13 @@ def create_comment(
         db, {new_comment.user_id} if new_comment.user_id else set()
     )
     reply_map = _comment_reply_counts(db, [new_comment.id])
-    return _comment_to_response(new_comment, nick_map, reply_map)
+    return _comment_to_response(
+        new_comment,
+        nick_map,
+        reply_map,
+        viewer_user_id=current_user.id,
+        viewer_is_admin=bool(getattr(current_user, "is_admin", False)),
+    )
 
 
 @router.get("/posts/{post_id}/comments", response_model=list[CommentResponse])
@@ -422,7 +573,20 @@ def get_comments(
     nick_map = _nickname_map(db, ids)
     cids = [c.id for c in comments]
     reply_map = _comment_reply_counts(db, cids)
-    return [_comment_to_response(c, nick_map, reply_map) for c in comments]
+    viewer_id = current_user.id if current_user else None
+    viewer_admin = (
+        bool(getattr(current_user, "is_admin", False)) if current_user else False
+    )
+    return [
+        _comment_to_response(
+            c,
+            nick_map,
+            reply_map,
+            viewer_user_id=viewer_id,
+            viewer_is_admin=viewer_admin,
+        )
+        for c in comments
+    ]
 @router.post("/posts/{post_id}/votes", response_model=VoteResponse)
 def create_vote(
     post_id: int,
@@ -431,6 +595,12 @@ def create_vote(
     current_user: User = Depends(get_current_user),
 ):
     post = _get_post_or_404(db, post_id, current_user)
+
+    if is_board_category(post.category):
+        raise HTTPException(
+            status_code=400,
+            detail="공지·건의 게시판 글에는 투표할 수 없어요.",
+        )
 
     if _vote_deadline_passed(post):
         raise HTTPException(
@@ -513,6 +683,44 @@ def get_vote_counts(
         results.append({"option": option, "count": count})
 
     return results
+@router.post("/posts/{post_id}/publish", response_model=PostResponse)
+def publish_post(
+    post_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """AI 임시저장 글을 게시판에 공개한다."""
+    post = _get_post_or_404(db, post_id, current_user)
+    if post.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="작성자만 게시할 수 있습니다.")
+    if bool(getattr(post, "is_published", True)):
+        raise HTTPException(status_code=400, detail="이미 게시된 글이에요.")
+    if (getattr(post, "post_kind", None) or "community") == "ai":
+        if not (getattr(post, "ai_recommended", None) or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="AI 추천을 완료한 뒤에 게시할 수 있어요.",
+            )
+    post.is_published = True
+    db.commit()
+    db.refresh(post)
+
+    # 연결된 AI 세션이 있으면 정리 (만료 전 마이페이지에서 게시한 경우)
+    linked_sess = (
+        db.query(AISession)
+        .filter(
+            AISession.draft_post_id == post_id,
+            AISession.user_id == current_user.id,
+        )
+        .first()
+    )
+    if linked_sess:
+        _delete_ai_session(db, linked_sess.id, linked_sess)
+
+    nick_map = _nickname_map(db, {current_user.id})
+    return _post_to_response(post, nick_map)
+
+
 @router.patch("/posts/{post_id}", response_model=PostResponse)
 def update_post(
     post_id: int,
@@ -524,6 +732,12 @@ def update_post(
     if post.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="작성자만 수정할 수 있습니다.")
     data = body.model_dump(exclude_unset=True)
+    new_cat = data.get("category", post.category)
+    if is_notice_category(new_cat) and not getattr(current_user, "is_admin", False):
+        raise HTTPException(
+            status_code=403,
+            detail="공지사항은 관리자만 작성·수정할 수 있어요.",
+        )
     if not data:
         raise HTTPException(status_code=400, detail="수정할 항목이 없습니다.")
     if "title" in data:
@@ -550,6 +764,9 @@ def update_post(
                 detail="AI 추천을 완료한 뒤에만 대화 공개 여부를 바꿀 수 있어요.",
             )
         post.ai_transcript_public = bool(data["ai_transcript_public"])
+    if is_board_category(post.category):
+        post.options = ""
+        post.vote_deadline_at = None
     db.commit()
     db.refresh(post)
     nick_map = _nickname_map(db, {post.user_id} if post.user_id else set())
@@ -586,7 +803,13 @@ def update_comment(
     db.refresh(c)
     nick_map = _nickname_map(db, {c.user_id} if c.user_id else set())
     reply_map = _comment_reply_counts(db, [c.id])
-    return _comment_to_response(c, nick_map, reply_map)
+    return _comment_to_response(
+        c,
+        nick_map,
+        reply_map,
+        viewer_user_id=current_user.id,
+        viewer_is_admin=bool(getattr(current_user, "is_admin", False)),
+    )
 
 
 @router.delete(
