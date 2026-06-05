@@ -19,7 +19,19 @@ type UserMe = {
   nickname: string | null;
   created_at: string;
   is_admin?: boolean;
+  auth_provider?: string;
 };
+
+function authProviderLabel(provider: string | undefined): string {
+  switch ((provider || "email").trim().toLowerCase()) {
+    case "google":
+      return "Google";
+    case "kakao":
+      return "카카오";
+    default:
+      return "이메일";
+  }
+}
 
 type Post = {
   id: number;
@@ -418,6 +430,11 @@ export default function MyPage() {
             <p className="mt-0.5 truncate text-sm text-zinc-600 dark:text-[#9bb3c7]">
               {user.email}
             </p>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-[#8fa3b8]">
+              <span className="rounded-full bg-zinc-100 px-2 py-0.5 font-medium text-zinc-600 dark:bg-zinc-800/80 dark:text-zinc-300">
+                {authProviderLabel(user.auth_provider)} 로그인
+              </span>
+            </p>
             <button
               type="button"
               disabled
@@ -472,6 +489,11 @@ export default function MyPage() {
           ) : null}
 
           <AccountRow label="이메일" value={user.email} />
+
+          <AccountRow
+            label="로그인 방식"
+            value={`${authProviderLabel(user.auth_provider)} 로그인`}
+          />
 
           <AccountRow
             label="비밀번호"

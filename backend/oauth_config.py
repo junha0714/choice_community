@@ -13,7 +13,14 @@ load_dotenv(_BACKEND_DIR / ".env")
 load_dotenv()
 
 
+def _ensure_env_loaded() -> None:
+    """uvicorn --reload 는 .env 변경을 안 읽으므로 OAuth 설정 조회 시 재로드."""
+    load_dotenv(_BACKEND_DIR / ".env")
+    load_dotenv()
+
+
 def _env(name: str) -> str:
+    _ensure_env_loaded()
     return os.getenv(name, "").strip()
 
 
