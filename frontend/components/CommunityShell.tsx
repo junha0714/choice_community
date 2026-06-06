@@ -167,7 +167,7 @@ export function CommunityShell({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [hideShell, pathname]);
+  }, [hideShell]);
 
   if (hideShell) {
     return <>{children}</>;

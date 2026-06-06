@@ -81,7 +81,7 @@ export function HeaderNav() {
         setUserNickname(null);
         setUserEmail(null);
       });
-  }, [pathname, hasToken]);
+  }, [hasToken]);
 
   useEffect(() => {
     const t = getStoredToken();
@@ -105,7 +105,7 @@ export function HeaderNav() {
       window.clearInterval(id);
       window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, onChanged);
     };
-  }, [pathname, hasToken]);
+  }, [hasToken]);
 
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
