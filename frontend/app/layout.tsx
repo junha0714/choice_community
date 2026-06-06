@@ -8,6 +8,7 @@ import { CommunityShell } from "@/components/CommunityShell";
 import { HeaderNav } from "@/components/HeaderNav";
 import { SiteFooter } from "@/components/SiteFooter";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { ToastHost } from "@/components/ToastHost";
 import { THEME_STORAGE_KEY } from "@/lib/theme-storage";
 import {
   getSiteUrl,
@@ -119,6 +120,7 @@ export default function RootLayout({
         </div>
 
         <SiteFooter />
+        <ToastHost />
       </body>
     </html>
   );

@@ -52,8 +52,8 @@ export function CategoryIcon({
 
 export function CategoryLabel({
   category,
-  className = "inline-flex min-w-0 items-center gap-1",
-  iconClassName,
+  className = "inline-flex min-w-0 items-center gap-1.5",
+  iconClassName = "h-3.5 w-3.5 shrink-0 opacity-85",
   showIcon = true,
 }: CategoryLabelProps) {
   const name = categoryDisplayName(category);

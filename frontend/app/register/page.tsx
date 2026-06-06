@@ -6,6 +6,7 @@ import { FormEvent, useState } from "react";
 import { AuthField } from "@/components/auth/AuthField";
 import { AuthFormShell } from "@/components/auth/AuthFormShell";
 import { AuthNotice } from "@/components/auth/AuthNotice";
+import { SocialLoginButtons } from "@/components/auth/SocialLoginButtons";
 import { API_BASE_URL } from "@/lib/config";
 import { AUTH_ACTION_LOGIN, AUTH_BTN_PRIMARY } from "@/lib/auth-form-classes";
 import { fetchWithTimeout, isAbortError } from "@/lib/fetch-with-timeout";
@@ -61,12 +62,12 @@ export default function RegisterPage() {
   return (
     <AuthFormShell
       title="회원가입"
-      lead="몇 가지만 입력하면 바로 고민 글쓰기와 투표에 참여할 수 있어요."
+      lead="이메일 가입 또는 소셜 계정으로 바로 시작할 수 있어요."
     >
       <ul className="space-y-1.5 text-xs leading-relaxed text-zinc-600 dark:text-[#9bb3c7]">
         <li className="flex gap-2">
           <span className="font-semibold text-sky-600 dark:text-sky-400">1.</span>
-          <span>이메일·비밀번호로 계정을 만들어요</span>
+          <span>이메일로 계정을 만들거나 Google·카카오로 빠르게 가입할 수 있어요</span>
         </li>
         <li className="flex gap-2">
           <span className="font-semibold text-sky-600 dark:text-sky-400">2.</span>
@@ -122,6 +123,10 @@ export default function RegisterPage() {
           로그인하기
         </Link>
       </form>
+
+      <div className="mt-6">
+        <SocialLoginButtons />
+      </div>
     </AuthFormShell>
   );
 }

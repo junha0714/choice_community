@@ -12,6 +12,10 @@ import { useParams, useRouter } from "next/navigation";
 import { API_BASE_URL } from "@/lib/config";
 import { getStoredToken } from "@/lib/auth-storage";
 import { jsonAuthHeaders } from "@/lib/auth-headers";
+import { messageFromApiDetail } from "@/lib/api-message";
+import { toast } from "@/lib/toast";
+import { formMessages } from "@/lib/form-messages";
+import { FieldHint, fieldInputClass } from "@/components/FieldHint";
 import { PostBody } from "@/components/PostBody";
 import { tryNavigateToWrite } from "@/lib/require-login-for-write";
 import { AiReasonDisplay } from "@/components/AiReasonDisplay";
@@ -514,6 +518,7 @@ export default function PostDetailPage() {
   const [similarSpin, setSimilarSpin] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentInput, setCommentInput] = useState("");
+  const [commentInputError, setCommentInputError] = useState<string | null>(null);
   const [commentAnonymous, setCommentAnonymous] = useState(false);
   const [voteCounts, setVoteCounts] = useState<VoteCount[]>([]);
   const [myVote, setMyVote] = useState<MyVote | null>(null);
@@ -522,6 +527,7 @@ export default function PostDetailPage() {
   const [aiState, setAiState] = useState<AIFlowResponse | null>(null);
   const [aiTranscript, setAiTranscript] = useState<AITranscriptItem[]>([]);
   const [aiAnswer, setAiAnswer] = useState("");
+  const [aiAnswerError, setAiAnswerError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
   const [aiVisibilitySaving, setAiVisibilitySaving] = useState(false);
@@ -670,14 +676,15 @@ export default function PostDetailPage() {
 
   const handleCreateComment = async () => {
     if (!getStoredToken()) {
-      alert("댓글은 로그인 후 작성할 수 있어요.");
+      toast.info("댓글은 로그인 후 작성할 수 있습니다.");
       router.push("/login");
       return;
     }
     if (!commentInput.trim()) {
-      alert("댓글 내용을 입력해줘");
+      setCommentInputError(formMessages.commentRequired);
       return;
     }
+    setCommentInputError(null);
 
     const res = await fetch(`${API_BASE_URL}/posts/${params.id}/comments`, {
       method: "POST",
@@ -697,19 +704,17 @@ export default function PostDetailPage() {
     } else {
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) {
-        alert("로그인이 필요해요.");
+        toast.info(formMessages.loginRequired);
         router.push("/login");
       } else {
-        alert(
-          typeof data.detail === "string" ? data.detail : "댓글 작성 실패"
-        );
+        toast.error(messageFromApiDetail(data.detail, "댓글 작성 실패"));
       }
     }
   };
 
   const handleVote = async (selectedOption: string) => {
     if (!getStoredToken()) {
-      alert("투표는 로그인 후 할 수 있어요.");
+      toast.info("투표는 로그인 후 할 수 있습니다.");
       router.push("/login");
       return;
     }
@@ -719,11 +724,11 @@ export default function PostDetailPage() {
       meId != null &&
       post.user_id === meId
     ) {
-      alert("본인이 쓴 글에는 투표할 수 없어요.");
+      toast.warning("본인이 작성한 글에는 투표할 수 없습니다.");
       return;
     }
     if (myVote) {
-      alert("이미 이 글에 투표했어요. 투표는 변경할 수 없습니다.");
+      toast.warning("이미 이 글에 투표하셨습니다. 투표는 변경할 수 없습니다.");
       return;
     }
     const res = await fetch(`${API_BASE_URL}/posts/${params.id}/votes`, {
@@ -735,16 +740,14 @@ export default function PostDetailPage() {
     if (res.ok) {
       fetchVotes();
       fetchMyVote();
-      alert(`${selectedOption}에 투표했어요.`);
+      toast.success(`${selectedOption}에 투표했습니다.`);
     } else {
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) {
-        alert("로그인이 필요해요.");
+        toast.info(formMessages.loginRequired);
         router.push("/login");
       } else {
-        alert(
-          typeof data.detail === "string" ? data.detail : "투표 실패"
-        );
+        toast.error(messageFromApiDetail(data.detail, "투표 실패"));
       }
     }
   };
@@ -752,7 +755,7 @@ export default function PostDetailPage() {
   const handleCloseCommunityVote = async () => {
     if (!params?.id || !post) return;
     if (!getStoredToken()) {
-      alert("로그인이 필요해요.");
+      toast.info(formMessages.loginRequired);
       router.push("/login");
       return;
     }
@@ -771,13 +774,9 @@ export default function PostDetailPage() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setPost(data as Post);
-        alert("투표를 마감했어요.");
+        toast.success("투표를 마감했습니다.");
       } else {
-        alert(
-          typeof data.detail === "string"
-            ? data.detail
-            : "투표 마감에 실패했어요."
-        );
+        toast.error(messageFromApiDetail(data.detail, "투표 마감에 실패했습니다."));
       }
     } finally {
       setVoteCloseLoading(false);
@@ -787,7 +786,7 @@ export default function PostDetailPage() {
   const handleStartAI = async () => {
     if (!params?.id) return;
     if (!getStoredToken()) {
-      alert("AI 질문은 로그인한 작성자만 진행할 수 있어요.");
+      toast.info("AI 질문은 로그인한 작성자만 진행할 수 있어요.");
       router.push("/login");
       return;
     }
@@ -858,9 +857,10 @@ export default function PostDetailPage() {
     }
     const answerToSend = (payload?.presetAnswer ?? aiAnswer).trim();
     if (action === "answer" && !answerToSend) {
-      alert("답변을 입력해줘");
+      setAiAnswerError(formMessages.answerRequired);
       return;
     }
+    setAiAnswerError(null);
 
     setAiLoading(true);
     setAiError("");
@@ -941,7 +941,7 @@ export default function PostDetailPage() {
 
   const handleToggleLike = async () => {
     if (!getStoredToken()) {
-      alert("좋아요는 로그인 후 할 수 있어요.");
+      toast.info("좋아요는 로그인 후 할 수 있어요.");
       router.push("/login");
       return;
     }
@@ -957,9 +957,7 @@ export default function PostDetailPage() {
       );
     } else {
       const data = await res.json().catch(() => ({}));
-      alert(
-        typeof data.detail === "string" ? data.detail : "좋아요 처리 실패"
-      );
+      toast.error(messageFromApiDetail(data.detail, "좋아요 처리 실패"));
     }
   };
 
@@ -1084,7 +1082,7 @@ export default function PostDetailPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert(typeof data.detail === "string" ? data.detail : "게시 실패");
+        toast.error(messageFromApiDetail(data.detail, "게시 실패"));
         return;
       }
       setPost(data as Post);
@@ -1109,7 +1107,7 @@ export default function PostDetailPage() {
       return;
     }
     const data = await res.json().catch(() => ({}));
-    alert(typeof data.detail === "string" ? data.detail : "삭제 실패");
+    toast.error(messageFromApiDetail(data.detail, "삭제 실패"));
   };
 
   const handleReportPost = async () => {
@@ -1131,9 +1129,9 @@ export default function PostDetailPage() {
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
-      alert("신고가 접수되었습니다.");
+      toast.success("신고가 접수되었습니다.");
     } else {
-      alert(typeof data.detail === "string" ? data.detail : "신고 실패");
+      toast.error(messageFromApiDetail(data.detail, "신고 실패"));
     }
   };
 
@@ -1151,11 +1149,11 @@ export default function PostDetailPage() {
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
-      alert("차단했습니다.");
+      toast.success("차단했습니다.");
       fetchPost({ countView: false });
       fetchComments();
     } else {
-      alert(typeof data.detail === "string" ? data.detail : "차단 실패");
+      toast.error(messageFromApiDetail(data.detail, "차단 실패"));
     }
   };
 
@@ -1177,9 +1175,9 @@ export default function PostDetailPage() {
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
-      alert("신고가 접수되었습니다.");
+      toast.success("신고가 접수되었습니다.");
     } else {
-      alert(typeof data.detail === "string" ? data.detail : "신고 실패");
+      toast.error(messageFromApiDetail(data.detail, "신고 실패"));
     }
   };
 
@@ -1192,7 +1190,7 @@ export default function PostDetailPage() {
     if (!params?.id || editingCommentId == null) return;
     const t = editCommentDraft.trim();
     if (!t) {
-      alert("댓글 내용을 입력해 주세요.");
+      toast.warning("댓글 내용을 입력해 주세요.");
       return;
     }
     const res = await fetch(
@@ -1208,7 +1206,7 @@ export default function PostDetailPage() {
       setEditingCommentId(null);
       fetchComments();
     } else {
-      alert(typeof data.detail === "string" ? data.detail : "수정 실패");
+      toast.error(messageFromApiDetail(data.detail, "수정 실패"));
     }
   };
 
@@ -1224,7 +1222,7 @@ export default function PostDetailPage() {
       if (editingCommentId === commentId) setEditingCommentId(null);
       fetchComments();
     } else {
-      alert(typeof data.detail === "string" ? data.detail : "삭제 실패");
+      toast.error(messageFromApiDetail(data.detail, "삭제 실패"));
     }
   };
 
@@ -1636,13 +1634,21 @@ export default function PostDetailPage() {
                   답변
                   <textarea
                     value={aiAnswer}
-                    onChange={(e) => setAiAnswer(e.target.value)}
-                    className="mt-1.5 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-200/60 dark:border-[#2a3544] dark:bg-zinc-950/40 dark:text-white dark:focus:border-sky-500 dark:focus:ring-sky-500/20"
+                    onChange={(e) => {
+                      setAiAnswer(e.target.value);
+                      setAiAnswerError(null);
+                    }}
+                    aria-invalid={!!aiAnswerError}
+                    className={`mt-1.5 w-full ${fieldInputClass(!!aiAnswerError)}`}
                     style={{ minHeight: 72 }}
                   />
                 </label>
 
                 <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <FieldHint
+                    message={aiAnswerError}
+                    className="mb-0 w-full sm:mr-auto sm:w-auto"
+                  />
                   <button
                     type="button"
                     onClick={() => void handleNextAI({ action: "answer" })}
@@ -1779,9 +1785,9 @@ export default function PostDetailPage() {
         )}
 
         <div className="mb-3 flex flex-wrap gap-2">
-          {options.map((option) => (
+          {options.map((option, index) => (
             <button
-              key={option}
+              key={`vote-opt-${index}`}
               type="button"
               disabled={
                 !!myVote || isAuthorForVote || !meResolved || voteClosed
@@ -1812,9 +1818,9 @@ export default function PostDetailPage() {
             아직 투표가 없습니다.
           </p>
         ) : (
-          voteCounts.map((vote) => (
+          voteCounts.map((vote, index) => (
             <div
-              key={vote.option}
+              key={`vote-count-${index}`}
               className="mt-1.5 flex flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-200/90 bg-white px-2.5 py-1.5 text-sm text-zinc-700 dark:border-[#223141] dark:bg-[#0f1720] dark:text-[#cbd5e1]"
             >
               <span className="font-semibold text-zinc-900 dark:text-white">
@@ -1955,9 +1961,13 @@ export default function PostDetailPage() {
 
           <textarea
             value={commentInput}
-            onChange={(e) => setCommentInput(e.target.value)}
+            onChange={(e) => {
+              setCommentInput(e.target.value);
+              setCommentInputError(null);
+            }}
             aria-label={replyToId != null ? "답글" : "댓글"}
-            className="w-full rounded-lg border border-zinc-300/90 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200/70 dark:border-[#2a3544] dark:bg-zinc-950/40 dark:text-white dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30"
+            aria-invalid={!!commentInputError}
+            className={`w-full ${fieldInputClass(!!commentInputError, "transition focus:border-indigo-500 focus:ring-indigo-200/70 dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30")}`}
             style={{ minHeight: 72 }}
           />
 
@@ -1973,13 +1983,19 @@ export default function PostDetailPage() {
             </label>
           ) : null}
 
-          <button
-            type="button"
-            onClick={handleCreateComment}
-            className="rounded-lg bg-sky-700 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-600 dark:bg-sky-600 dark:hover:bg-sky-500"
-          >
-            댓글 등록
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <FieldHint
+              message={commentInputError}
+              className="mb-0 w-full sm:mr-auto sm:w-auto"
+            />
+            <button
+              type="button"
+              onClick={handleCreateComment}
+              className="rounded-lg bg-sky-700 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-600 dark:bg-sky-600 dark:hover:bg-sky-500"
+            >
+              댓글 등록
+            </button>
+          </div>
         </div>
 
         <div className="mt-4 border-t border-zinc-100 pt-3 dark:border-[#283548]">

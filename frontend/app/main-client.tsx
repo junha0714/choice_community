@@ -132,7 +132,7 @@ export default function MainClient() {
   }, []);
 
   const boardCta = (
-    <div className="rounded-xl border-2 border-sky-400/55 bg-linear-to-r from-sky-50 via-white to-cyan-50/90 px-4 py-4 shadow-[0_10px_28px_-18px_rgba(2,132,199,0.35)] dark:border-sky-600/50 dark:from-sky-950/40 dark:via-[#111827] dark:to-cyan-950/25 sm:px-5 sm:py-4">
+    <div className="rounded-xl border border-sky-300/50 bg-linear-to-r from-sky-50/90 via-white to-cyan-50/80 px-4 py-4 dark:border-sky-700/45 dark:from-sky-950/35 dark:via-[#111827] dark:to-cyan-950/20 sm:px-5 sm:py-4">
       <div className="min-w-0">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-400">
           고민 게시판

@@ -23,6 +23,8 @@ import {
   type HomeFeed,
 } from "@/lib/home-feed";
 import {
+  BTN_PRIMARY,
+  BTN_SM,
   CARD,
   CARD_STRONG,
   FILTER_CHIP,
@@ -32,6 +34,9 @@ import {
   SECTION_HEADING_BAR,
   SECTION_SUBTITLE,
   SECTION_TITLE,
+  SORT_CHIP,
+  SORT_CHIP_ACTIVE,
+  SORT_CHIP_IDLE,
   TEXT_MUTED,
 } from "@/lib/ui-classes";
 
@@ -321,23 +326,14 @@ function BoardInner() {
       )}
 
       <div className={CARD}>
-        {feed === "choice" || feed === "feedback" ? (
+        {feed === "feedback" ? (
           <div className="mb-3 flex items-center justify-end gap-2 border-b border-sky-100/90 pb-3 dark:border-sky-800/55 sm:mb-4 sm:pb-4">
-            {feed === "choice" ? (
-              <Link
-                href="/write/ai"
-                className="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400"
-              >
-                글쓰기
-              </Link>
-            ) : (
-              <Link
-                href="/feedback"
-                className="inline-flex items-center justify-center rounded-lg bg-violet-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-500 dark:bg-violet-500 dark:hover:bg-violet-400"
-              >
-                피드백 남기기
-              </Link>
-            )}
+            <Link
+              href="/feedback"
+              className={`${BTN_SM} bg-violet-600 text-white hover:bg-violet-500 dark:bg-violet-500 dark:hover:bg-violet-400`}
+            >
+              피드백 남기기
+            </Link>
           </div>
         ) : null}
         <div className="flex w-full flex-col gap-3 lg:max-w-none">
@@ -358,10 +354,7 @@ function BoardInner() {
               className={INPUT_FIELD}
               autoComplete="off"
             />
-            <button
-              type="submit"
-              className="shrink-0 rounded-xl bg-linear-to-r from-sky-600 to-sky-700 px-5 py-2.5 text-sm font-medium text-white shadow-md shadow-sky-900/20 transition hover:from-sky-500 hover:to-sky-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/60 focus-visible:ring-offset-2 dark:shadow-sky-950/40"
-            >
+            <button type="submit" className={`shrink-0 ${BTN_PRIMARY}`}>
               검색
             </button>
           </form>
@@ -387,10 +380,8 @@ function BoardInner() {
                       key={s}
                       href={href}
                       className={[
-                        "rounded-lg px-2.5 py-1.5 text-xs font-medium transition",
-                        active
-                          ? "bg-sky-600 text-white shadow-sm shadow-sky-900/25 dark:bg-sky-500 dark:shadow-sky-950/40"
-                          : "border border-sky-200/75 bg-sky-50/85 text-sky-950 hover:border-sky-300 hover:bg-sky-100/85 dark:border-sky-700/70 dark:bg-sky-950/45 dark:text-sky-100 dark:hover:border-sky-600 dark:hover:bg-sky-900/55",
+                        SORT_CHIP,
+                        active ? SORT_CHIP_ACTIVE : SORT_CHIP_IDLE,
                       ].join(" ")}
                     >
                       {SORT_LABELS[s]}
@@ -531,7 +522,7 @@ function BoardInner() {
                       href={`/posts/${post.id}`}
                       title={post.title}
                       className={[
-                        "group block px-4 py-3 transition",
+                        "group block px-4 py-3.5 transition sm:py-3",
                         "hover:bg-sky-50/75 focus-visible:bg-sky-50/75",
                         "dark:hover:bg-sky-950/30 dark:focus-visible:bg-sky-950/30",
                         "focus-visible:outline-none",

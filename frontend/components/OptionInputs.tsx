@@ -1,9 +1,15 @@
 "use client";
 
+import {
+  duplicateOptionIndexes,
+} from "@/lib/post-options";
+import { FieldHint } from "@/components/FieldHint";
+
 export type OptionInputsAiSuggest = {
   onClick: () => void;
   loading: boolean;
   notice?: string;
+  error?: string;
 };
 
 type Props = {
@@ -12,6 +18,7 @@ type Props = {
   onAdd: () => void;
   onRemove: (index: number) => void;
   aiSuggest?: OptionInputsAiSuggest;
+  errorMessage?: string | null;
 };
 
 function allOptionsEmpty(options: string[]): boolean {
@@ -24,8 +31,18 @@ export function OptionInputs({
   onAdd,
   onRemove,
   aiSuggest,
+  errorMessage,
 }: Props) {
   const showAi = Boolean(aiSuggest && allOptionsEmpty(options));
+  const duplicateIndexes = duplicateOptionIndexes(options);
+
+  const inputClass = (index: number) =>
+    [
+      "min-w-0 flex-1 rounded-lg border bg-white px-3 py-2 text-sm text-zinc-900 outline-none dark:bg-zinc-950/40 dark:text-white",
+      duplicateIndexes.has(index)
+        ? "border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-200 dark:border-red-500/70 dark:focus:border-red-400 dark:focus:ring-red-500/30"
+        : "border-zinc-300 focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:focus:border-sky-400 dark:focus:ring-sky-500/30",
+    ].join(" ");
 
   return (
     <div className="space-y-2">
@@ -61,12 +78,14 @@ export function OptionInputs({
           </button>
         </div>
       </div>
+      <FieldHint message={errorMessage} />
       {options.map((value, i) => (
         <div key={i} className="flex gap-2">
           <input
             value={value}
             onChange={(e) => onChange(i, e.target.value)}
-            className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
+            className={inputClass(i)}
+            aria-invalid={duplicateIndexes.has(i) || undefined}
           />
           {options.length > 2 && (
             <button
@@ -79,6 +98,9 @@ export function OptionInputs({
           )}
         </div>
       ))}
+      {aiSuggest?.error ? (
+        <FieldHint message={aiSuggest.error} />
+      ) : null}
       {aiSuggest?.notice ? (
         <p className="text-xs text-amber-800 dark:text-amber-200/90">{aiSuggest.notice}</p>
       ) : null}

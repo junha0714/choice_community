@@ -121,7 +121,21 @@ async def _exchange_kakao_code(cfg: OAuthProviderConfig, code: str) -> dict:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         if token_res.status_code != 200:
-            raise HTTPException(status_code=400, detail="카카오 토큰 교환에 실패했습니다.")
+            detail = "카카오 토큰 교환에 실패했습니다."
+            try:
+                err = token_res.json()
+                kakao_msg = (err.get("error_description") or err.get("error") or "").strip()
+                if kakao_msg:
+                    detail = f"카카오 토큰 교환 실패: {kakao_msg}"
+                    if "bad client credentials" in kakao_msg.lower():
+                        detail += (
+                            " — 카카오 로그인 Client Secret ON이면 backend/.env 의 "
+                            "KAKAO_CLIENT_SECRET(카카오 로그인 코드)을 확인하고 uvicorn을 "
+                            "재시작한 뒤, 로그인 페이지에서 처음부터 다시 시도해 주세요."
+                        )
+            except Exception:
+                pass
+            raise HTTPException(status_code=400, detail=detail)
         access_token = token_res.json().get("access_token")
         if not access_token:
             raise HTTPException(status_code=400, detail="카카오 access token이 없습니다.")

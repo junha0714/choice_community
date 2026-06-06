@@ -776,6 +776,22 @@ def update_post(
 
 
 @router.delete("/posts/{post_id}", response_model=MessageResponse)
+def delete_post(
+    post_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    post = _get_post_or_404(db, post_id, current_user)
+    if post.deleted_at is not None:
+        raise HTTPException(status_code=400, detail="이미 삭제된 글입니다.")
+    is_admin = bool(getattr(current_user, "is_admin", False))
+    if post.user_id != current_user.id and not is_admin:
+        raise HTTPException(status_code=403, detail="작성자만 삭제할 수 있습니다.")
+    post.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+    return MessageResponse(message="글이 삭제되었습니다.")
+
+
 @router.patch(
     "/posts/{post_id}/comments/{comment_id}",
     response_model=CommentResponse,

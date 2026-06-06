@@ -2,12 +2,25 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { API_BASE_URL } from "@/lib/config";
 import { getStoredToken } from "@/lib/auth-storage";
 import { jsonAuthHeaders } from "@/lib/auth-headers";
+import { toast } from "@/lib/toast";
+import {
+  mergeContentWithImages,
+  splitContentImages,
+} from "@/lib/post-content-images";
+import { hasDuplicateOptions, normalizeOptionList } from "@/lib/post-options";
+import { formMessages } from "@/lib/form-messages";
+import { FieldHint, fieldInputClass } from "@/components/FieldHint";
+import { uploadPostImage } from "@/lib/upload-post-image";
 import { OptionInputs } from "@/components/OptionInputs";
 import { CategorySelect } from "@/components/CategorySelect";
+import {
+  ImageAttachments,
+  tryPasteImageFile,
+} from "@/components/ImageAttachments";
 
 function isoToDatetimeLocal(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -17,11 +30,19 @@ function isoToDatetimeLocal(iso: string | null | undefined): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+type EditFormErrors = {
+  title?: string;
+  content?: string;
+  category?: string;
+  options?: string;
+};
+
 export default function EditPostPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [category, setCategory] = useState("");
   const [categories, setCategories] = useState<string[]>([]);
   const [options, setOptions] = useState<string[]>(["", ""]);
@@ -30,8 +51,37 @@ export default function EditPostPage() {
   const [error, setError] = useState("");
   const [tagsText, setTagsText] = useState("");
   const [voteDeadlineLocal, setVoteDeadlineLocal] = useState("");
-  const [uploadingImage, setUploadingImage] = useState(false);
-  const contentRef = useRef<HTMLTextAreaElement>(null);
+  const [formErrors, setFormErrors] = useState<EditFormErrors>({});
+  const uploadImage = useCallback(
+    async (file: File) => {
+      const token = getStoredToken();
+      if (!token) {
+        router.push("/login");
+        throw new Error("no token");
+      }
+      try {
+        return await uploadPostImage(file, token);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "업로드 실패");
+        throw e;
+      }
+    },
+    [router]
+  );
+
+  const optionsDuplicate = hasDuplicateOptions(normalizeOptionList(options));
+  const optionsFieldError =
+    formErrors.options ??
+    (optionsDuplicate ? formMessages.optionsDuplicate : null);
+
+  const clearFormError = (field: keyof EditFormErrors) => {
+    setFormErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  };
 
   useEffect(() => {
     const token = getStoredToken();
@@ -77,7 +127,9 @@ export default function EditPostPage() {
               return;
             }
             setTitle(post.title ?? "");
-            setContent(post.content ?? "");
+            const split = splitContentImages(post.content ?? "");
+            setContent(split.text);
+            setImageUrls(split.images);
             setTagsText((post.tags ?? []).join(", "));
             setVoteDeadlineLocal(isoToDatetimeLocal(post.vote_deadline_at));
             setCategory(post.category ?? "");
@@ -95,6 +147,7 @@ export default function EditPostPage() {
   }, [params?.id, router]);
 
   const setOption = (index: number, value: string) => {
+    clearFormError("options");
     const next = [...options];
     next[index] = value;
     setOptions(next);
@@ -110,57 +163,6 @@ export default function EditPostPage() {
     setOptions(options.filter((_, j) => j !== index));
   };
 
-  const insertIntoContent = (snippet: string) => {
-    const el = contentRef.current;
-    if (!el) {
-      setContent((c) => (c ? `${c}\n\n${snippet}` : snippet));
-      return;
-    }
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    const before = content.slice(0, start);
-    const after = content.slice(end);
-    const sep = before && !before.endsWith("\n") ? "\n\n" : "";
-    const ins = sep + snippet;
-    const next = before + ins + after;
-    setContent(next);
-    requestAnimationFrame(() => {
-      el.focus();
-      const pos = start + ins.length;
-      el.setSelectionRange(pos, pos);
-    });
-  };
-
-  const handleImagePick = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    const token = getStoredToken();
-    if (!token) {
-      router.push("/login");
-      return;
-    }
-    setUploadingImage(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch(`${API_BASE_URL}/upload/image`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: fd,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(typeof data.detail === "string" ? data.detail : "업로드 실패");
-        return;
-      }
-      const url = typeof data.url === "string" ? data.url : "";
-      if (url) insertIntoContent(`![img](${url})`);
-    } finally {
-      setUploadingImage(false);
-    }
-  };
-
   const handleSubmit = async () => {
     if (!params?.id) return;
     const token = getStoredToken();
@@ -168,19 +170,23 @@ export default function EditPostPage() {
       router.push("/login");
       return;
     }
-    if (!title.trim() || !content.trim()) {
-      alert("제목과 내용을 입력해줘");
-      return;
+    const errors: EditFormErrors = {};
+    if (!title.trim()) errors.title = formMessages.titleRequired;
+    if (!content.trim() && imageUrls.length === 0) {
+      errors.content = formMessages.contentRequired;
     }
-    if (!category) {
-      alert("카테고리를 선택해줘");
-      return;
-    }
-    const optionList = options.map((o) => o.trim()).filter(Boolean);
+    if (!category) errors.category = formMessages.categoryRequired;
+    const optionList = normalizeOptionList(options);
     if (optionList.length < 2) {
-      alert("선택지를 비어 있지 않게 최소 2개 이상 입력해줘");
+      errors.options = formMessages.optionsMin;
+    } else if (hasDuplicateOptions(optionList)) {
+      errors.options = formMessages.optionsDuplicate;
+    }
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
       return;
     }
+    setFormErrors({});
     const tags = tagsText
       .split(/[,，]/)
       .map((s) => s.trim().toLowerCase())
@@ -194,7 +200,7 @@ export default function EditPostPage() {
         headers: jsonAuthHeaders(),
         body: JSON.stringify({
           title: title.trim(),
-          content: content.trim(),
+          content: mergeContentWithImages(content, imageUrls),
           category,
           options: optionList,
           tags,
@@ -259,32 +265,42 @@ export default function EditPostPage() {
           <input
             type="text"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30"
+            onChange={(e) => {
+              setTitle(e.target.value);
+              clearFormError("title");
+            }}
+            aria-invalid={!!formErrors.title}
+            className={`mt-1 w-full ${fieldInputClass(!!formErrors.title, "focus:border-indigo-500 focus:ring-indigo-200 dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30")}`}
           />
+          <FieldHint message={formErrors.title} />
         </label>
         <label className="block text-sm font-medium text-zinc-700 dark:text-[#AFC6D8]">
           고민 내용
           <textarea
-            ref={contentRef}
             value={content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={(e) => {
+              setContent(e.target.value);
+              clearFormError("content");
+            }}
+            onPaste={(e) => {
+              void tryPasteImageFile(
+                e,
+                uploadImage,
+                (url) => setImageUrls((prev) => [...prev, url]),
+                imageUrls.length >= 10
+              );
+            }}
             rows={8}
-            className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30"
+            aria-invalid={!!formErrors.content}
+            className={`mt-1 w-full ${fieldInputClass(!!formErrors.content, "focus:border-indigo-500 focus:ring-indigo-200 dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30")}`}
+          />
+          <FieldHint message={formErrors.content} />
+          <ImageAttachments
+            images={imageUrls}
+            onChange={setImageUrls}
+            onUpload={uploadImage}
           />
         </label>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-100 dark:border-[#223141] dark:bg-[#1B2733] dark:text-[#AFC6D8] dark:hover:bg-sky-950/35">
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/gif,image/webp"
-              className="hidden"
-              onChange={(e) => void handleImagePick(e)}
-              disabled={uploadingImage}
-            />
-            {uploadingImage ? "업로드 중…" : "본문에 사진 넣기"}
-          </label>
-        </div>
         <label className="block text-sm font-medium text-zinc-700 dark:text-[#AFC6D8]">
           태그 (쉼표로 구분)
           <input
@@ -293,16 +309,23 @@ export default function EditPostPage() {
             className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30"
           />
         </label>
-        <CategorySelect
-          categories={categories}
-          value={category}
-          onChange={setCategory}
-        />
+        <div>
+          <CategorySelect
+            categories={categories}
+            value={category}
+            onChange={(v) => {
+              setCategory(v);
+              clearFormError("category");
+            }}
+          />
+          <FieldHint message={formErrors.category} />
+        </div>
         <OptionInputs
           options={options}
           onChange={setOption}
           onAdd={addOption}
           onRemove={removeOption}
+          errorMessage={optionsFieldError}
         />
         <label className="block text-sm font-medium text-zinc-700 dark:text-[#AFC6D8]">
           투표 마감 (비우면 마감 없음)
@@ -313,14 +336,16 @@ export default function EditPostPage() {
             className="mt-1 w-full max-w-md rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-indigo-400 dark:focus:ring-indigo-500/30"
           />
         </label>
-        <button
-          type="button"
-          onClick={() => void handleSubmit()}
-          disabled={saving}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60 dark:bg-indigo-500/90 dark:hover:bg-indigo-400/90"
-        >
-          {saving ? "저장 중..." : "저장"}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={saving || !!optionsFieldError}
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60 dark:bg-indigo-500/90 dark:hover:bg-indigo-400/90"
+          >
+            {saving ? "저장 중..." : "저장"}
+          </button>
+        </div>
       </div>
     </main>
   );

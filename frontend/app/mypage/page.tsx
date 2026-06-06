@@ -12,6 +12,8 @@ import {
 } from "@/lib/auth-storage";
 import { jsonAuthHeaders } from "@/lib/auth-headers";
 import { ProfileAvatar } from "@/components/ProfileAvatar";
+import { AppNotice } from "@/components/AppNotice";
+import { toast } from "@/lib/toast";
 
 type UserMe = {
   id: number;
@@ -20,6 +22,7 @@ type UserMe = {
   created_at: string;
   is_admin?: boolean;
   auth_provider?: string;
+  has_password?: boolean;
 };
 
 function authProviderLabel(provider: string | undefined): string {
@@ -129,11 +132,13 @@ function AccountRow({
   value,
   onEdit,
   editing,
+  editActionLabel,
 }: {
   label: string;
   value: string;
   onEdit?: () => void;
   editing?: boolean;
+  editActionLabel?: string;
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 py-2.5">
@@ -154,7 +159,7 @@ function AccountRow({
               : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-[#223141] dark:bg-[#1B2733] dark:text-sky-100 dark:hover:bg-sky-950/35",
           ].join(" ")}
         >
-          {editing ? "닫기" : "변경"}
+          {editing ? "닫기" : editActionLabel ?? "변경"}
         </button>
       ) : null}
     </div>
@@ -180,6 +185,7 @@ export default function MyPage() {
   const [pwSaving, setPwSaving] = useState(false);
   const [pwMsg, setPwMsg] = useState("");
   const [deletePw, setDeletePw] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteSaving, setDeleteSaving] = useState(false);
 
   const publishedPosts = useMemo(
@@ -283,6 +289,7 @@ export default function MyPage() {
       setUser(data);
       setNickname(data.nickname ?? "");
       setAccountEdit(null);
+      toast.success("닉네임을 저장했어요.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "저장 실패");
     } finally {
@@ -314,9 +321,13 @@ export default function MyPage() {
         );
       }
       setPwMsg(typeof data.message === "string" ? data.message : "변경되었습니다.");
+      setUser((u) => (u ? { ...u, has_password: true } : u));
       setCurrentPw("");
       setNewPw("");
       setAccountEdit(null);
+      toast.success(
+        typeof data.message === "string" ? data.message : "비밀번호를 저장했어요."
+      );
     } catch (err) {
       setPwMsg(err instanceof Error ? err.message : "변경 실패");
     } finally {
@@ -334,6 +345,14 @@ export default function MyPage() {
 
   const handleDeleteAccount = async (e: FormEvent) => {
     e.preventDefault();
+    if (user?.has_password && !deletePw.trim()) {
+      setError("비밀번호를 입력해 주세요.");
+      return;
+    }
+    if (!user?.has_password && !deleteConfirm) {
+      setError("탈퇴 확인에 체크해 주세요.");
+      return;
+    }
     if (!window.confirm("정말 탈퇴할까요? 작성한 글과 데이터는 복구할 수 없어요.")) {
       return;
     }
@@ -343,7 +362,7 @@ export default function MyPage() {
       const res = await fetch(`${API_BASE_URL}/auth/me`, {
         method: "DELETE",
         headers: jsonAuthHeaders(),
-        body: JSON.stringify({ password: deletePw }),
+        body: JSON.stringify({ password: user?.has_password ? deletePw : "" }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -353,6 +372,7 @@ export default function MyPage() {
       }
       clearStoredToken();
       notifyAuthSessionChanged();
+      toast.success("회원 탈퇴가 완료되었어요.");
       router.push("/");
       router.refresh();
     } catch (e) {
@@ -416,7 +436,7 @@ export default function MyPage() {
         ) : null}
       </div>
 
-      {error ? <p className="text-sm text-red-700 dark:text-red-300">{error}</p> : null}
+      {error ? <AppNotice variant="error">{error}</AppNotice> : null}
 
       <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-[#223141] dark:bg-[#16202A] sm:p-6">
         <h2 className="text-base font-semibold text-zinc-900 dark:text-white">계정</h2>
@@ -435,14 +455,6 @@ export default function MyPage() {
                 {authProviderLabel(user.auth_provider)} 로그인
               </span>
             </p>
-            <button
-              type="button"
-              disabled
-              title="프로필 사진 변경은 곧 추가될 예정이에요"
-              className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-semibold text-zinc-400 dark:border-[#223141] dark:bg-zinc-900/50 dark:text-zinc-500"
-            >
-              프로필 사진 변경 (준비 중)
-            </button>
           </div>
         </div>
 
@@ -497,24 +509,31 @@ export default function MyPage() {
 
           <AccountRow
             label="비밀번호"
-            value="••••••••"
+            value={user.has_password ? "••••••••" : "아직 설정하지 않음"}
             onEdit={() => toggleAccountEdit("password")}
             editing={accountEdit === "password"}
+            editActionLabel={user.has_password ? "변경" : "설정"}
           />
           {accountEdit === "password" ? (
             <form onSubmit={handlePasswordChange} className="space-y-3 py-3">
+              {user.has_password ? (
+                <label className="block text-sm font-medium text-zinc-800 dark:text-white">
+                  현재 비밀번호
+                  <input
+                    type="password"
+                    value={currentPw}
+                    onChange={(e) => setCurrentPw(e.target.value)}
+                    autoComplete="current-password"
+                    className={inputClass}
+                  />
+                </label>
+              ) : (
+                <p className="text-xs leading-relaxed text-zinc-600 dark:text-[#9bb3c7]">
+                  소셜 로그인 계정에도 비밀번호를 설정하면 이메일로 로그인할 수 있어요.
+                </p>
+              )}
               <label className="block text-sm font-medium text-zinc-800 dark:text-white">
-                현재 비밀번호
-                <input
-                  type="password"
-                  value={currentPw}
-                  onChange={(e) => setCurrentPw(e.target.value)}
-                  autoComplete="current-password"
-                  className={inputClass}
-                />
-              </label>
-              <label className="block text-sm font-medium text-zinc-800 dark:text-white">
-                새 비밀번호 (8자 이상)
+                {user.has_password ? "새 비밀번호 (8자 이상)" : "비밀번호 (8자 이상)"}
                 <input
                   type="password"
                   value={newPw}
@@ -541,7 +560,11 @@ export default function MyPage() {
                   disabled={pwSaving}
                   className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-60 dark:bg-sky-500 dark:hover:bg-sky-400"
                 >
-                  {pwSaving ? "변경 중..." : "비밀번호 변경"}
+                  {pwSaving
+                    ? "저장 중..."
+                    : user.has_password
+                      ? "비밀번호 변경"
+                      : "비밀번호 설정"}
                 </button>
                 <button
                   type="button"
@@ -585,19 +608,33 @@ export default function MyPage() {
             <p className="text-xs text-red-800/90 dark:text-red-200/80">
               탈퇴하면 작성 글·댓글·AI 기록이 삭제되며 복구할 수 없어요.
             </p>
-            <label className="mt-3 block text-sm font-medium text-red-950 dark:text-red-100">
-              비밀번호 확인
-              <input
-                type="password"
-                value={deletePw}
-                onChange={(e) => setDeletePw(e.target.value)}
-                autoComplete="current-password"
-                className="mt-1 w-full rounded-lg border border-red-200 bg-white px-3 py-2 text-sm outline-none focus:border-red-400 focus:ring-2 focus:ring-red-200/70 dark:border-red-900/50 dark:bg-zinc-950/40 dark:text-white"
-              />
-            </label>
+            {user.has_password ? (
+              <label className="mt-3 block text-sm font-medium text-red-950 dark:text-red-100">
+                비밀번호 확인
+                <input
+                  type="password"
+                  value={deletePw}
+                  onChange={(e) => setDeletePw(e.target.value)}
+                  autoComplete="current-password"
+                  className="mt-1 w-full rounded-lg border border-red-200 bg-white px-3 py-2 text-sm outline-none focus:border-red-400 focus:ring-2 focus:ring-red-200/70 dark:border-red-900/50 dark:bg-zinc-950/40 dark:text-white"
+                />
+              </label>
+            ) : (
+              <label className="mt-3 flex items-start gap-2 text-sm text-red-950 dark:text-red-100">
+                <input
+                  type="checkbox"
+                  checked={deleteConfirm}
+                  onChange={(e) => setDeleteConfirm(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-red-300 text-red-600 focus:ring-red-400"
+                />
+                <span>탈퇴에 동의하며, 데이터가 삭제됨을 이해했어요.</span>
+              </label>
+            )}
             <button
               type="submit"
-              disabled={deleteSaving || !deletePw}
+              disabled={
+                deleteSaving || (user.has_password ? !deletePw : !deleteConfirm)
+              }
               className="mt-3 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {deleteSaving ? "처리 중..." : "탈퇴하기"}

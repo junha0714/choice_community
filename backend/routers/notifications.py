@@ -102,3 +102,40 @@ def mark_all_notifications_read(
         n.read_at = now
     db.commit()
     return MessageResponse(message="모두 읽음으로 표시했습니다.")
+
+
+@router.delete("/notifications/{notification_id}", response_model=MessageResponse)
+def delete_notification(
+    notification_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    n = (
+        db.query(Notification)
+        .filter(
+            Notification.id == notification_id,
+            Notification.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not n:
+        raise HTTPException(status_code=404, detail="알림을 찾을 수 없습니다.")
+    db.delete(n)
+    db.commit()
+    return MessageResponse(message="알림을 삭제했습니다.")
+
+
+@router.delete("/notifications", response_model=MessageResponse)
+def delete_all_notifications(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    deleted = (
+        db.query(Notification)
+        .filter(Notification.user_id == current_user.id)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    if not deleted:
+        return MessageResponse(message="삭제할 알림이 없습니다.")
+    return MessageResponse(message="모든 알림을 삭제했습니다.")

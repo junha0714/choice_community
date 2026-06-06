@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { fetchOAuthProviders, oauthStartUrl } from "@/lib/oauth";
+import { toast } from "@/lib/toast";
 
 function GoogleIcon() {
   return (
@@ -64,11 +65,7 @@ export function SocialLoginButtons({ onUnavailable }: SocialLoginButtonsProps) {
         onUnavailable(provider);
         return;
       }
-      alert(
-        provider === "google"
-          ? "Google 로그인 설정이 필요해요. backend/.env에 GOOGLE_* 값을 추가해 주세요."
-          : "카카오 로그인 설정이 필요해요. backend/.env에 KAKAO_* 값을 추가해 주세요."
-      );
+      toast.warning(provider === "google" ? "Google 로그인 설정이 필요해요. backend/.env에 GOOGLE_* 값을 추가해 주세요." : "카카오 로그인 설정이 필요해요. backend/.env에 KAKAO_* 값을 추가해 주세요.");
       return;
     }
     window.location.href = oauthStartUrl(provider);

@@ -35,6 +35,7 @@ class UserPublic(BaseModel):
     created_at: datetime
     is_admin: bool = False
     auth_provider: str = "email"
+    has_password: bool = False
 
     class Config:
         from_attributes = True
@@ -72,7 +73,7 @@ class UserSettingsUpdate(BaseModel):
 
 
 class AccountDeleteBody(BaseModel):
-    password: str = Field(min_length=1, max_length=128)
+    password: str = Field(default="", max_length=128)
 
 
 def _normalize_tag_list(v: List[str] | None) -> List[str]:
@@ -142,6 +143,8 @@ class PostCreate(BaseModel):
             )
         if len(stripped) > 6:
             raise ValueError("선택지는 최대 6개까지예요.")
+        if len({x.casefold() for x in stripped}) != len(stripped):
+            raise ValueError("선택지는 서로 달라야 해요.")
         return stripped
 
     @model_validator(mode="after")
@@ -201,6 +204,8 @@ class PostUpdate(BaseModel):
             )
         if len(stripped) > 6:
             raise ValueError("선택지는 최대 6개까지예요.")
+        if len({x.casefold() for x in stripped}) != len(stripped):
+            raise ValueError("선택지는 서로 달라야 해요.")
         return stripped
 
     @model_validator(mode="after")
@@ -436,6 +441,8 @@ class AISessionStartRequest(BaseModel):
             raise ValueError("선택지는 최소 2개 이상 입력해 주세요.")
         if len(stripped) > 6:
             raise ValueError("선택지는 최대 6개까지예요.")
+        if len({x.casefold() for x in stripped}) != len(stripped):
+            raise ValueError("선택지는 서로 달라야 해요.")
         return stripped
 
     @field_validator("tags", mode="before")

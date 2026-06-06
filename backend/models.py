@@ -36,6 +36,10 @@ class User(Base):
     notify_like = Column(Boolean, nullable=False, server_default="true", default=True)
     notify_vote_end = Column(Boolean, nullable=False, server_default="true", default=True)
 
+    @property
+    def has_password(self) -> bool:
+        return bool(self.hashed_password)
+
 
 class Post(Base):
     __tablename__ = "posts"

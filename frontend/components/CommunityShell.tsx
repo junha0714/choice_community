@@ -15,6 +15,7 @@ import {
   resolveHomeFeed,
   type HomeFeed,
 } from "@/lib/home-feed";
+import { LINK_MORE } from "@/lib/ui-classes";
 
 type CategoryStat = { category: string; count: number };
 type TrendingPost = {
@@ -37,7 +38,11 @@ const TRENDING_SECTIONS: { key: keyof TrendingPostsBundle; label: string }[] = [
 
 function TrendingPostList({ posts }: { posts: TrendingPost[] }) {
   if (posts.length === 0) {
-    return <p className="py-1 text-[11px] text-zinc-400 dark:text-[#AFC6D8]">아직 없어요</p>;
+    return (
+      <p className="py-2 text-[11px] leading-relaxed text-zinc-400 dark:text-[#AFC6D8]">
+        아직 없어요
+      </p>
+    );
   }
   return (
     <ul className="space-y-0.5 text-sm">
@@ -46,16 +51,25 @@ function TrendingPostList({ posts }: { posts: TrendingPost[] }) {
           <Link
             href={`/posts/${post.id}`}
             title={post.title}
-            className="group flex min-w-0 items-center gap-1.5 rounded-lg px-1 py-1 text-sm transition hover:bg-sky-50/80 dark:hover:bg-sky-950/40"
+            className="group flex min-w-0 items-start gap-2 rounded-lg px-1.5 py-1.5 transition hover:bg-sky-50/80 dark:hover:bg-sky-950/40"
           >
             <span
-              className="w-4 shrink-0 text-right text-[11px] font-semibold tabular-nums text-sky-600/90 dark:text-sky-400/85"
+              className="mt-0.5 w-4 shrink-0 text-right text-[11px] font-semibold tabular-nums text-sky-600/90 dark:text-sky-400/85"
               aria-hidden
             >
               {index + 1}
             </span>
-            <span className="min-w-0 truncate font-medium text-zinc-800 group-hover:text-sky-800 dark:text-sky-100 dark:group-hover:text-white">
-              {post.title}
+            <span className="min-w-0 flex-1">
+              <span className="line-clamp-2 text-[13px] font-medium leading-snug text-zinc-800 group-hover:text-sky-800 dark:text-sky-100 dark:group-hover:text-white">
+                {post.title}
+              </span>
+              <span className="mt-0.5 block truncate text-[10px] text-zinc-400 dark:text-[#8fa3b8]">
+                <CategoryLabel
+                  category={post.category}
+                  showIcon={false}
+                  className="inline-flex min-w-0 max-w-full"
+                />
+              </span>
             </span>
           </Link>
         </li>
@@ -65,10 +79,6 @@ function TrendingPostList({ posts }: { posts: TrendingPost[] }) {
 }
 
 const AUTH_PATHS = ["/login", "/register", "/forgot-password", "/reset-password"];
-
-/** 헤더(sticky) 아래에서 양쪽 사이드가 스크롤 시 따라옴 */
-const STICKY_SIDEBAR_CLASS =
-  "sticky z-20 top-[4.75rem] max-h-[calc(100dvh-5.25rem)] overflow-y-auto overscroll-y-contain pb-2 lg:top-[5rem] xl:top-[5.25rem] 2xl:top-[5.5rem]";
 
 function SideCard({
   title,
@@ -82,18 +92,20 @@ function SideCard({
   children: ReactNode;
 }) {
   return (
-    <div className="cc-card p-3.5 sm:p-4">
-      <div className="flex items-start justify-between gap-2 border-b border-sky-100/90 pb-2.5 dark:border-[#223141]">
+    <div className="cc-card p-4 sm:p-4">
+      <div className="flex items-start justify-between gap-2 border-b border-sky-100/90 pb-3 dark:border-[#223141]">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold tracking-tight text-zinc-800 dark:text-white">
             {title}
           </h2>
         {subtitle ? (
-          <p className="mt-0.5 text-[11px] text-zinc-400 dark:text-[#AFC6D8]">{subtitle}</p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-400 dark:text-[#AFC6D8]">
+            {subtitle}
+          </p>
         ) : null}
         </div>
         {icon ? (
-          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-600/10 text-sky-700 ring-1 ring-sky-200/80 dark:bg-sky-400/10 dark:text-sky-200 dark:ring-sky-800/60">
+          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-600/10 text-sky-700 ring-1 ring-sky-200/80 dark:bg-sky-400/10 dark:text-sky-200 dark:ring-sky-800/60">
             {icon}
           </span>
         ) : null}
@@ -173,31 +185,36 @@ export function CommunityShell({ children }: { children: ReactNode }) {
       subtitle="전체 기간"
       icon={<TrendingUp className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden />}
     >
-      <div className="space-y-3">
+      <div className="space-y-3.5">
         {TRENDING_SECTIONS.map(({ key, label }, i) => (
           <div
             key={key}
             className={
               i > 0
-                ? "border-t border-sky-100/90 pt-3 dark:border-[#223141]"
+                ? "border-t border-sky-100/90 pt-3.5 dark:border-[#223141]"
                 : undefined
             }
           >
-            <h3 className="text-[11px] font-semibold text-sky-700/90 dark:text-sky-300/85">
+            <h3 className="text-xs font-semibold text-sky-700 dark:text-sky-300/90">
               {label}
             </h3>
-            <div className="mt-1">
+            <div className="mt-1.5">
               <TrendingPostList posts={trending?.[key] ?? []} />
             </div>
           </div>
         ))}
+        <div className="border-t border-sky-100/90 pt-3 dark:border-[#223141]">
+          <Link href={BOARD_PATH} className={LINK_MORE}>
+            게시판에서 더 보기
+          </Link>
+        </div>
       </div>
     </SideCard>
   );
 
   const navLinkClass = (active: boolean, muted = false) =>
     [
-      "group flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 transition-colors",
+      "group flex min-h-[2.75rem] cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 transition-colors",
       active
         ? "bg-sky-200/80 text-sky-950 shadow-sm shadow-sky-900/5 dark:bg-sky-500/18 dark:text-white"
         : muted
@@ -229,7 +246,7 @@ export function CommunityShell({ children }: { children: ReactNode }) {
             onBoard && feed === "choice" && activeCategory === row.category
           )}
         >
-          <span className="truncate font-medium dark:font-semibold">
+          <span className="truncate text-[13px] font-medium leading-snug">
             <CategoryLabel category={row.category} />
           </span>
         </Link>
@@ -263,7 +280,7 @@ export function CommunityShell({ children }: { children: ReactNode }) {
       key={key}
       href={href}
       className={[
-        "rounded-full border px-3 py-1.5 text-xs transition",
+        "rounded-full border px-3 py-2 text-xs transition",
         active
           ? "border-sky-500 bg-sky-100 font-medium text-sky-950 dark:border-sky-500 dark:bg-sky-950/60 dark:text-sky-50"
           : muted
@@ -278,20 +295,18 @@ export function CommunityShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex w-full flex-col gap-6 sm:gap-7 md:gap-8 lg:gap-10 xl:gap-11 2xl:gap-12">
       <div className="grid w-full grid-cols-1 gap-5 sm:gap-6 md:gap-7 lg:grid-cols-[minmax(200px,220px)_minmax(0,1fr)_minmax(240px,280px)] lg:gap-7 xl:grid-cols-[minmax(200px,220px)_minmax(0,1fr)_minmax(256px,300px)] xl:gap-8">
-        <aside className="hidden lg:block lg:min-h-0">
-          <div className={STICKY_SIDEBAR_CLASS}>
-            <SideCard title="게시판">{categoryNav}</SideCard>
-          </div>
+        <aside className="hidden lg:block lg:min-w-0">
+          <SideCard title="게시판">{categoryNav}</SideCard>
         </aside>
 
         <div className="min-w-0">{children}</div>
 
-        <aside className="hidden lg:block lg:min-h-0">
-          <div className={`${STICKY_SIDEBAR_CLASS} space-y-4 lg:space-y-5 xl:space-y-6`}>
-            {trendingPopularCard}
-          </div>
+        <aside className="hidden lg:block lg:min-w-0">
+          <div className="space-y-4 lg:space-y-5 xl:space-y-6">{trendingPopularCard}</div>
         </aside>
       </div>
+
+      <div className="lg:hidden">{trendingPopularCard}</div>
 
       <div className="cc-card p-4 sm:p-5 lg:hidden">
         <h2 className="text-sm font-semibold text-zinc-800 dark:text-sky-100">게시판</h2>
@@ -321,8 +336,6 @@ export function CommunityShell({ children }: { children: ReactNode }) {
           )}
         </div>
       </div>
-
-      <div className="lg:hidden">{trendingPopularCard}</div>
     </div>
   );
 }

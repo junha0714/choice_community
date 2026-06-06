@@ -230,7 +230,8 @@ def change_password(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.hashed_password:
+    had_password = bool(current_user.hashed_password)
+    if had_password:
         if not verify_password(body.current_password, current_user.hashed_password):
             raise HTTPException(
                 status_code=400,
@@ -238,7 +239,11 @@ def change_password(
             )
     current_user.hashed_password = hash_password(body.new_password)
     db.commit()
-    return MessageResponse(message="비밀번호가 변경되었습니다.")
+    return MessageResponse(
+        message="비밀번호가 변경되었습니다."
+        if had_password
+        else "비밀번호가 설정되었습니다."
+    )
 
 
 def _expires_at_utc(expires_at: datetime) -> datetime:

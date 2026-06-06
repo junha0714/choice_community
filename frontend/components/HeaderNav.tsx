@@ -11,8 +11,10 @@ import {
   hasStoredSession,
   notifyAuthSessionChanged,
 } from "@/lib/auth-storage";
+import { NOTIFICATIONS_CHANGED_EVENT } from "@/lib/notifications-events";
 import { API_BASE_URL } from "@/lib/config";
 import { ProfileAvatar } from "@/components/ProfileAvatar";
+import { BTN_NAV } from "@/lib/ui-classes";
 import { tryNavigateToWrite } from "@/lib/require-login-for-write";
 import { BOARD_PATH } from "@/lib/home-feed";
 
@@ -96,8 +98,13 @@ export function HeaderNav() {
         .catch(() => setUnreadNotifications(0));
     };
     tick();
+    const onChanged = () => tick();
+    window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, onChanged);
     const id = window.setInterval(tick, 45_000);
-    return () => window.clearInterval(id);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, onChanged);
+    };
   }, [pathname, hasToken]);
 
   useEffect(() => {
@@ -141,9 +148,9 @@ export function HeaderNav() {
       <Link
         href={BOARD_PATH}
         className={[
-          "shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-0",
+          BTN_NAV,
           isBoardPage
-            ? "bg-sky-600 text-white shadow-sm hover:bg-sky-500 focus-visible:ring-sky-300/70 dark:bg-sky-500 dark:hover:bg-sky-400"
+            ? "bg-sky-600 font-semibold text-white shadow-sm hover:bg-sky-500 focus-visible:ring-sky-300/70 dark:bg-sky-500 dark:hover:bg-sky-400"
             : "text-zinc-600 hover:bg-sky-100/90 hover:text-sky-950 focus-visible:ring-sky-300/70 dark:text-sky-200/90 dark:hover:bg-sky-950/55 dark:hover:text-white",
         ].join(" ")}
       >
@@ -153,10 +160,11 @@ export function HeaderNav() {
         type="button"
         onClick={() => tryNavigateToWrite(router)}
         className={[
-          "shrink-0 cursor-pointer rounded-full px-3 py-1.5 font-semibold shadow-sm transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-0",
+          BTN_NAV,
+          "cursor-pointer font-semibold shadow-sm shadow-indigo-900/15 focus-visible:ring-2 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-0",
           isWritePage
-            ? "bg-indigo-600 text-white hover:bg-indigo-500 focus-visible:ring-indigo-200/80 dark:bg-indigo-500/90 dark:hover:bg-indigo-400/90 dark:focus-visible:ring-indigo-500/30"
-            : "bg-sky-50 text-zinc-800 hover:bg-sky-100 focus-visible:ring-sky-300/70 dark:bg-sky-950/45 dark:text-sky-100 dark:hover:bg-sky-900/60 dark:focus-visible:ring-sky-500/35",
+            ? "bg-indigo-600 text-white ring-2 ring-indigo-300/80 hover:bg-indigo-500 focus-visible:ring-indigo-200/80 dark:bg-indigo-500 dark:ring-indigo-400/50 dark:hover:bg-indigo-400/90 dark:focus-visible:ring-indigo-500/30"
+            : "bg-indigo-600 text-white hover:bg-indigo-500 focus-visible:ring-indigo-200/80 dark:bg-indigo-500 dark:hover:bg-indigo-400 dark:focus-visible:ring-indigo-500/30",
         ].join(" ")}
       >
         글쓰기
@@ -214,14 +222,14 @@ export function HeaderNav() {
           <button
             type="button"
             onClick={handleLogout}
-            className="whitespace-nowrap rounded-full border border-sky-200/90 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm transition hover:border-sky-300 hover:bg-sky-50 focus-visible:ring-2 focus-visible:ring-sky-300/70 focus-visible:ring-offset-2 dark:border-sky-800/70 dark:bg-zinc-900/90 dark:text-sky-200 dark:hover:border-sky-700 dark:hover:bg-sky-950/60 dark:focus-visible:ring-sky-500/35 dark:focus-visible:ring-offset-0 sm:text-sm"
+            className="whitespace-nowrap rounded-full border border-sky-200/90 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 shadow-sm transition hover:border-sky-300 hover:bg-sky-50 focus-visible:ring-2 focus-visible:ring-sky-300/70 focus-visible:ring-offset-2 dark:border-sky-800/70 dark:bg-zinc-900/90 dark:text-sky-200 dark:hover:border-sky-700 dark:hover:bg-sky-950/60 dark:focus-visible:ring-sky-500/35 dark:focus-visible:ring-offset-0"
           >
             로그아웃
           </button>
         ) : (
           <Link
             href="/login"
-            className="whitespace-nowrap rounded-full bg-sky-700 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm shadow-sky-900/25 transition hover:bg-sky-600 focus-visible:ring-2 focus-visible:ring-sky-300/70 focus-visible:ring-offset-2 dark:bg-sky-500 dark:hover:bg-sky-400 dark:focus-visible:ring-sky-500/35 dark:focus-visible:ring-offset-0 sm:text-sm"
+            className={`${BTN_NAV} bg-sky-700 font-semibold text-white shadow-sm shadow-sky-900/20 hover:bg-sky-600 focus-visible:ring-sky-300/70 dark:bg-sky-500 dark:hover:bg-sky-400 dark:focus-visible:ring-sky-500/35`}
           >
             로그인
           </Link>

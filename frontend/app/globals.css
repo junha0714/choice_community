@@ -102,7 +102,7 @@ body {
   border-radius: 0.75rem;
   background: var(--surface);
   color: var(--foreground);
-  box-shadow: 0 10px 30px -22px rgb(2 132 199 / 0.18);
+  box-shadow: 0 8px 24px -20px rgb(2 132 199 / 0.22);
   backdrop-filter: blur(10px);
 }
 
@@ -111,7 +111,7 @@ body {
   border-radius: 0.75rem;
   background: color-mix(in oklab, var(--surface) 88%, white 12%);
   color: var(--foreground);
-  box-shadow: 0 16px 40px -28px rgb(2 132 199 / 0.22);
+  box-shadow: 0 10px 28px -22px rgb(2 132 199 / 0.2);
   backdrop-filter: blur(10px);
 }
 

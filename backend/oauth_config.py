@@ -21,7 +21,11 @@ def _ensure_env_loaded() -> None:
 
 def _env(name: str) -> str:
     _ensure_env_loaded()
-    return os.getenv(name, "").strip()
+    value = os.getenv(name, "").strip()
+    # KEY=  # 주석 형태는 dotenv가 "# ..." 를 값으로 읽는 경우가 있음
+    if value.startswith("#"):
+        return ""
+    return value
 
 
 @dataclass(frozen=True)

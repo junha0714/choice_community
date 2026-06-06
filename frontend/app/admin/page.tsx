@@ -6,6 +6,8 @@ import { useCallback, useEffect, useState } from "react";
 import { API_BASE_URL } from "@/lib/config";
 import { getStoredToken } from "@/lib/auth-storage";
 import { jsonAuthHeaders } from "@/lib/auth-headers";
+import { AppNotice } from "@/components/AppNotice";
+import { toast } from "@/lib/toast";
 
 type ReportRow = {
   id: number;
@@ -116,7 +118,7 @@ export default function AdminPage() {
       body: JSON.stringify({ status, admin_note: null }),
     });
     if (res.ok) void loadReports(reportPage);
-    else alert("처리 실패");
+    else toast.error("처리 실패");
   };
 
   const toggleBan = async (userId: number, isBanned: boolean) => {
@@ -134,7 +136,7 @@ export default function AdminPage() {
       body: JSON.stringify({ is_banned: !isBanned }),
     });
     if (res.ok) void loadUsers(userPage);
-    else alert("변경 실패");
+    else toast.error("변경 실패");
   };
 
   if (loading) {
@@ -148,7 +150,7 @@ export default function AdminPage() {
   if (error) {
     return (
       <main className="mx-auto w-full max-w-4xl p-4">
-        <p className="text-red-700 dark:text-red-200">{error}</p>
+        <AppNotice variant="error">{error}</AppNotice>
       </main>
     );
   }
