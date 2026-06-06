@@ -1753,7 +1753,7 @@ export default function PostDetailPage() {
               : "건의·제안 글입니다. 선택지·투표 없이 댓글로 의견을 남겨 주세요."}
           </p>
         </section>
-      ) : !isAiPost ? (
+      ) : options.length > 0 ? (
       <section className={cardClass}>
         <div className="flex flex-wrap items-start justify-between gap-2 border-b border-zinc-200/80 pb-2.5 dark:border-[#334155]">
           <div className="min-w-0 flex-1">
