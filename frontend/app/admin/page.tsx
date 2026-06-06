@@ -7,6 +7,7 @@ import { API_BASE_URL } from "@/lib/config";
 import { getStoredToken } from "@/lib/auth-storage";
 import { jsonAuthHeaders } from "@/lib/auth-headers";
 import { AppNotice } from "@/components/AppNotice";
+import { messageFromApiDetail } from "@/lib/api-message";
 import { toast } from "@/lib/toast";
 
 type ReportRow = {
@@ -53,6 +54,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [allowed, setAllowed] = useState(false);
   const [error, setError] = useState("");
+  const [deletingUserId, setDeletingUserId] = useState<number | null>(null);
 
   const loadReports = useCallback(async (page: number) => {
     const t = getStoredToken();
@@ -137,6 +139,33 @@ export default function AdminPage() {
     });
     if (res.ok) void loadUsers(userPage);
     else toast.error("변경 실패");
+  };
+
+  const deleteUser = async (u: UserRow) => {
+    const label = u.nickname?.trim() || u.email;
+    if (
+      !confirm(
+        `「${label}」 계정을 삭제할까요?\n\n작성 글·댓글·투표·AI 기록이 삭제되며 복구할 수 없습니다.`
+      )
+    ) {
+      return;
+    }
+    setDeletingUserId(u.id);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/users/${u.id}`, {
+        method: "DELETE",
+        headers: jsonAuthHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(messageFromApiDetail(data.detail, "계정 삭제에 실패했습니다."));
+        return;
+      }
+      toast.success("회원 계정을 삭제했습니다.");
+      void loadUsers(userPage);
+    } finally {
+      setDeletingUserId(null);
+    }
   };
 
   if (loading) {
@@ -290,13 +319,23 @@ export default function AdminPage() {
                   </td>
                   <td className="py-2">
                     {!u.is_admin ? (
-                      <button
-                        type="button"
-                        onClick={() => void toggleBan(u.id, u.is_banned)}
-                        className="text-xs text-indigo-700 hover:underline dark:text-indigo-200"
-                      >
-                        {u.is_banned ? "제한 해제" : "이용 제한"}
-                      </button>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <button
+                          type="button"
+                          onClick={() => void toggleBan(u.id, u.is_banned)}
+                          className="text-xs text-indigo-700 hover:underline dark:text-indigo-200"
+                        >
+                          {u.is_banned ? "제한 해제" : "이용 제한"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void deleteUser(u)}
+                          disabled={deletingUserId === u.id}
+                          className="text-xs text-red-700 hover:underline disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-300"
+                        >
+                          {deletingUserId === u.id ? "삭제 중…" : "계정 삭제"}
+                        </button>
+                      </div>
                     ) : (
                       "—"
                     )}

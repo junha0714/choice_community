@@ -20,7 +20,7 @@ from schemas import (
     PostResponse,
     MessageResponse,
 )
-from app_helpers import _notify, _nickname_map, _post_to_response
+from app_helpers import _notify, _nickname_map, _post_to_response, purge_user_account
 
 router = APIRouter(tags=["admin"])
 
@@ -131,6 +131,24 @@ def admin_patch_user(
     db.commit()
     db.refresh(u)
     return u
+
+
+@router.delete("/admin/users/{user_id}", response_model=MessageResponse)
+def admin_delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="본인 계정은 여기서 삭제할 수 없습니다.")
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+    if u.is_admin:
+        raise HTTPException(status_code=400, detail="관리자 계정은 삭제할 수 없습니다.")
+    purge_user_account(db, u)
+    db.commit()
+    return MessageResponse(message="회원 계정이 삭제되었습니다.")
 
 
 @router.patch("/admin/posts/{post_id}", response_model=PostResponse)

@@ -9,19 +9,7 @@ from sqlalchemy.orm import Session
 from auth import hash_password, verify_password, create_access_token
 from database import get_db
 from deps import get_current_user, get_user_for_token_refresh
-from models import (
-    User,
-    PasswordResetToken,
-    Post,
-    Comment,
-    Vote,
-    PostLike,
-    Notification,
-    AISession,
-    AISessionInteraction,
-    UserBlock,
-    Report,
-)
+from models import User, PasswordResetToken
 from schemas import (
     UserRegister,
     UserLogin,
@@ -37,7 +25,7 @@ from schemas import (
     ForgotPasswordResponse,
     MessageResponse,
 )
-from app_helpers import _hash_reset_token, _expires_at_utc
+from app_helpers import _hash_reset_token, _expires_at_utc, purge_user_account
 from settings import PASSWORD_RESET_DEBUG
 
 router = APIRouter(tags=["auth"])
@@ -178,48 +166,7 @@ def delete_my_account(
                 status_code=400,
                 detail="비밀번호가 올바르지 않습니다.",
             )
-    uid = current_user.id
-    now = datetime.now(timezone.utc)
-
-    db.query(Post).filter(Post.user_id == uid).update(
-        {Post.deleted_at: now},
-        synchronize_session=False,
-    )
-    db.query(Comment).filter(Comment.user_id == uid).update(
-        {Comment.deleted_at: now},
-        synchronize_session=False,
-    )
-
-    sess_ids = [
-        s[0]
-        for s in db.query(AISession.id).filter(AISession.user_id == uid).all()
-    ]
-    if sess_ids:
-        db.query(AISessionInteraction).filter(
-            AISessionInteraction.session_id.in_(sess_ids)
-        ).delete(synchronize_session=False)
-        db.query(AISession).filter(AISession.user_id == uid).delete(
-            synchronize_session=False
-        )
-
-    db.query(Notification).filter(Notification.user_id == uid).delete(
-        synchronize_session=False
-    )
-    db.query(Vote).filter(Vote.user_id == uid).delete(synchronize_session=False)
-    db.query(PostLike).filter(PostLike.user_id == uid).delete(
-        synchronize_session=False
-    )
-    db.query(UserBlock).filter(
-        (UserBlock.blocker_id == uid) | (UserBlock.blocked_id == uid)
-    ).delete(synchronize_session=False)
-    db.query(Report).filter(Report.reporter_id == uid).delete(
-        synchronize_session=False
-    )
-    db.query(PasswordResetToken).filter(
-        PasswordResetToken.user_id == uid
-    ).delete(synchronize_session=False)
-
-    db.delete(current_user)
+    purge_user_account(db, current_user)
     db.commit()
     return MessageResponse(message="회원 탈퇴가 완료되었습니다.")
 

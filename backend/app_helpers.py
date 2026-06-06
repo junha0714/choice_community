@@ -17,6 +17,9 @@ from models import (
     User,
     UserBlock,
     Notification,
+    PostLike,
+    Report,
+    PasswordResetToken,
 )
 from categories import is_board_category, is_notice_category
 from schemas import PostResponse, SimilarPostBrief, CommentResponse, AITranscriptItem
@@ -399,6 +402,53 @@ def _expires_at_utc(expires_at: datetime) -> datetime:
     if expires_at.tzinfo is None:
         return expires_at.replace(tzinfo=timezone.utc)
     return expires_at.astimezone(timezone.utc)
+
+
+def purge_user_account(db: Session, user: User) -> None:
+    """회원 탈퇴·관리자 삭제 공통: 연관 데이터 정리 후 users 행 삭제."""
+    uid = user.id
+    now = datetime.now(timezone.utc)
+
+    db.query(Post).filter(Post.user_id == uid).update(
+        {Post.deleted_at: now, Post.user_id: None},
+        synchronize_session=False,
+    )
+    db.query(Comment).filter(Comment.user_id == uid).update(
+        {Comment.deleted_at: now, Comment.user_id: None},
+        synchronize_session=False,
+    )
+
+    sess_ids = [
+        s[0] for s in db.query(AISession.id).filter(AISession.user_id == uid).all()
+    ]
+    if sess_ids:
+        db.query(AISessionInteraction).filter(
+            AISessionInteraction.session_id.in_(sess_ids)
+        ).delete(synchronize_session=False)
+        db.query(AISession).filter(AISession.user_id == uid).delete(
+            synchronize_session=False
+        )
+
+    db.query(Notification).filter(Notification.user_id == uid).delete(
+        synchronize_session=False
+    )
+    db.query(Vote).filter(Vote.user_id == uid).delete(synchronize_session=False)
+    db.query(PostLike).filter(PostLike.user_id == uid).delete(
+        synchronize_session=False
+    )
+    db.query(UserBlock).filter(
+        (UserBlock.blocker_id == uid) | (UserBlock.blocked_id == uid)
+    ).delete(synchronize_session=False)
+    db.query(Report).filter(Report.reporter_id == uid).delete(
+        synchronize_session=False
+    )
+    db.query(PasswordResetToken).filter(PasswordResetToken.user_id == uid).delete(
+        synchronize_session=False
+    )
+
+    db.delete(user)
+
+
 def _validate_report_target(db: Session, target_type: str, target_id: int) -> None:
     if target_type == "post":
         if not db.query(Post).filter(Post.id == target_id).first():
