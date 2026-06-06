@@ -153,8 +153,9 @@ export default function AdminPage() {
     setDeletingUserId(u.id);
     try {
       const res = await fetch(`${API_BASE_URL}/admin/users/${u.id}`, {
-        method: "DELETE",
+        method: "PATCH",
         headers: jsonAuthHeaders(),
+        body: JSON.stringify({ delete_account: true }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {

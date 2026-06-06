@@ -14,7 +14,7 @@ from schemas import (
     UserBlockResponse,
     MessageResponse,
 )
-from app_helpers import _validate_report_target
+from app_helpers import _nickname_map, _validate_report_target
 
 router = APIRouter(tags=["social"])
 
@@ -51,7 +51,17 @@ def list_blocks(
         .order_by(UserBlock.id.desc())
         .all()
     )
-    return rows
+    nick_map = _nickname_map(db, {r.blocked_id for r in rows})
+    return [
+        UserBlockResponse(
+            id=r.id,
+            blocker_id=r.blocker_id,
+            blocked_id=r.blocked_id,
+            blocked_nickname=nick_map.get(r.blocked_id),
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
 
 
 @router.post("/users/blocks", response_model=UserBlockResponse)

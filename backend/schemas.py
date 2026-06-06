@@ -558,6 +558,7 @@ class UserBlockResponse(BaseModel):
     id: int
     blocker_id: int
     blocked_id: int
+    blocked_nickname: str | None = None
     created_at: datetime
 
     class Config:
@@ -621,7 +622,16 @@ class AdminUserBrief(BaseModel):
 
 
 class AdminUserPatch(BaseModel):
-    is_banned: bool
+    is_banned: bool | None = None
+    delete_account: bool = False
+
+    @model_validator(mode="after")
+    def require_action(self):
+        if self.delete_account:
+            return self
+        if self.is_banned is None:
+            raise ValueError("is_banned 또는 delete_account가 필요합니다.")
+        return self
 
 
 class AdminPostPatch(BaseModel):

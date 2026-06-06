@@ -13,6 +13,8 @@ import {
 import { jsonAuthHeaders } from "@/lib/auth-headers";
 import { ProfileAvatar } from "@/components/ProfileAvatar";
 import { AppNotice } from "@/components/AppNotice";
+import { messageFromApiDetail } from "@/lib/api-message";
+import { formatPostDateLabel } from "@/lib/format-datetime";
 import { toast } from "@/lib/toast";
 
 type UserMe = {
@@ -48,6 +50,13 @@ type Post = {
   created_at: string;
   is_published?: boolean;
   ai_recommended?: string | null;
+};
+
+type BlockedUser = {
+  id: number;
+  blocked_id: number;
+  blocked_nickname: string | null;
+  created_at: string;
 };
 
 type MyConcernTab = "published" | "drafts" | "commented";
@@ -187,6 +196,9 @@ export default function MyPage() {
   const [deletePw, setDeletePw] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteSaving, setDeleteSaving] = useState(false);
+  const [blockedUsers, setBlockedUsers] = useState<BlockedUser[]>([]);
+  const [blocksLoading, setBlocksLoading] = useState(true);
+  const [unblockingId, setUnblockingId] = useState<number | null>(null);
 
   const publishedPosts = useMemo(
     () => posts.filter((p) => p.is_published !== false),
@@ -205,11 +217,14 @@ export default function MyPage() {
     }
     setError("");
     try {
-      const [resMe, resPosts] = await Promise.all([
+      const [resMe, resPosts, resBlocks] = await Promise.all([
         fetch(`${API_BASE_URL}/auth/me`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
         fetch(`${API_BASE_URL}/posts/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`${API_BASE_URL}/users/blocks`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ]);
@@ -228,11 +243,44 @@ export default function MyPage() {
       } else {
         setPosts([]);
       }
+      if (resBlocks.ok) {
+        const rows = (await resBlocks.json()) as BlockedUser[];
+        setBlockedUsers(Array.isArray(rows) ? rows : []);
+      } else {
+        setBlockedUsers([]);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "오류");
     } finally {
       setLoading(false);
+      setBlocksLoading(false);
     }
+  };
+
+  const handleUnblock = async (blockedUserId: number) => {
+    if (!confirm("차단을 해제할까요? 이 사용자의 글이 다시 보여요.")) return;
+    setUnblockingId(blockedUserId);
+    try {
+      const res = await fetch(`${API_BASE_URL}/users/blocks/${blockedUserId}`, {
+        method: "DELETE",
+        headers: jsonAuthHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(messageFromApiDetail(data.detail, "차단 해제에 실패했습니다."));
+        return;
+      }
+      setBlockedUsers((prev) => prev.filter((b) => b.blocked_id !== blockedUserId));
+      toast.success("차단을 해제했습니다.");
+    } finally {
+      setUnblockingId(null);
+    }
+  };
+
+  const blockedUserLabel = (row: BlockedUser) => {
+    const nick = row.blocked_nickname?.trim();
+    if (nick) return nick;
+    return `사용자 #${row.blocked_id}`;
   };
 
   const loadCommentedPosts = async () => {
@@ -641,6 +689,48 @@ export default function MyPage() {
             </button>
           </form>
         ) : null}
+      </section>
+
+      <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-[#223141] dark:bg-[#16202A] sm:p-6">
+        <h2 className="text-base font-semibold text-zinc-900 dark:text-white">
+          차단한 사용자
+        </h2>
+        <p className="mt-1 text-sm text-zinc-600 dark:text-[#AFC6D8]/85">
+          차단한 사용자의 글과 댓글은 게시판·글 상세에서 보이지 않아요.
+        </p>
+        {blocksLoading ? (
+          <p className="mt-4 text-sm text-zinc-500 dark:text-[#94a3b8]">불러오는 중...</p>
+        ) : blockedUsers.length === 0 ? (
+          <p className="mt-4 text-sm text-zinc-600 dark:text-[#AFC6D8]/85">
+            차단한 사용자가 없어요.
+          </p>
+        ) : (
+          <ul className="mt-4 divide-y divide-zinc-100 dark:divide-[#223141]">
+            {blockedUsers.map((row) => (
+              <li
+                key={row.id}
+                className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+              >
+                <div className="min-w-0">
+                  <p className="font-medium text-zinc-900 dark:text-white">
+                    {blockedUserLabel(row)}
+                  </p>
+                  <p className="mt-0.5 text-xs text-zinc-500 dark:text-[#8fa3b8]">
+                    차단일 {formatPostDateLabel(row.created_at)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleUnblock(row.blocked_id)}
+                  disabled={unblockingId === row.blocked_id}
+                  className="shrink-0 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#223141] dark:bg-[#1B2733] dark:text-sky-100 dark:hover:bg-sky-950/35"
+                >
+                  {unblockingId === row.blocked_id ? "해제 중…" : "차단 해제"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from typing import Union
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -23,6 +25,18 @@ from schemas import (
 from app_helpers import _notify, _nickname_map, _post_to_response, purge_user_account
 
 router = APIRouter(tags=["admin"])
+
+
+def _admin_delete_user_or_400(db: Session, admin: User, user_id: int) -> None:
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="본인 계정은 여기서 삭제할 수 없습니다.")
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+    if u.is_admin:
+        raise HTTPException(status_code=400, detail="관리자 계정은 삭제할 수 없습니다.")
+    purge_user_account(db, u)
+
 
 @router.get("/admin/reports", response_model=PaginatedReports)
 def admin_list_reports(
@@ -115,13 +129,21 @@ def admin_list_users(
     )
 
 
-@router.patch("/admin/users/{user_id}", response_model=AdminUserBrief)
+@router.patch(
+    "/admin/users/{user_id}",
+    response_model=Union[AdminUserBrief, MessageResponse],
+)
 def admin_patch_user(
     user_id: int,
     body: AdminUserPatch,
     db: Session = Depends(get_db),
     admin: User = Depends(get_current_admin),
 ):
+    if body.delete_account:
+        _admin_delete_user_or_400(db, admin, user_id)
+        db.commit()
+        return MessageResponse(message="회원 계정이 삭제되었습니다.")
+
     if user_id == admin.id:
         raise HTTPException(status_code=400, detail="본인 계정은 여기서 변경할 수 없습니다.")
     u = db.query(User).filter(User.id == user_id).first()
@@ -133,20 +155,24 @@ def admin_patch_user(
     return u
 
 
+@router.post("/admin/users/{user_id}/delete", response_model=MessageResponse)
+def admin_delete_user_post(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    _admin_delete_user_or_400(db, admin, user_id)
+    db.commit()
+    return MessageResponse(message="회원 계정이 삭제되었습니다.")
+
+
 @router.delete("/admin/users/{user_id}", response_model=MessageResponse)
 def admin_delete_user(
     user_id: int,
     db: Session = Depends(get_db),
     admin: User = Depends(get_current_admin),
 ):
-    if user_id == admin.id:
-        raise HTTPException(status_code=400, detail="본인 계정은 여기서 삭제할 수 없습니다.")
-    u = db.query(User).filter(User.id == user_id).first()
-    if not u:
-        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
-    if u.is_admin:
-        raise HTTPException(status_code=400, detail="관리자 계정은 삭제할 수 없습니다.")
-    purge_user_account(db, u)
+    _admin_delete_user_or_400(db, admin, user_id)
     db.commit()
     return MessageResponse(message="회원 계정이 삭제되었습니다.")
 
