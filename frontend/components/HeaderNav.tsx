@@ -149,9 +149,10 @@ export function HeaderNav() {
         href={BOARD_PATH}
         className={[
           BTN_NAV,
+          "font-semibold shadow-sm focus-visible:ring-2 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-0",
           isBoardPage
-            ? "bg-sky-600 font-semibold text-white shadow-sm hover:bg-sky-500 focus-visible:ring-sky-300/70 dark:bg-sky-500 dark:hover:bg-sky-400"
-            : "text-zinc-600 hover:bg-sky-100/90 hover:text-sky-950 focus-visible:ring-sky-300/70 dark:text-sky-200/90 dark:hover:bg-sky-950/55 dark:hover:text-white",
+            ? "bg-sky-600 text-white ring-2 ring-sky-300/70 shadow-sky-900/10 hover:bg-sky-500 focus-visible:ring-sky-200/80 dark:bg-sky-500 dark:ring-sky-400/45 dark:hover:bg-sky-400"
+            : "bg-sky-500 text-white shadow-sky-900/10 hover:bg-sky-600 focus-visible:ring-sky-200/80 dark:bg-sky-600/90 dark:hover:bg-sky-500",
         ].join(" ")}
       >
         게시판
@@ -161,10 +162,10 @@ export function HeaderNav() {
         onClick={() => tryNavigateToWrite(router)}
         className={[
           BTN_NAV,
-          "cursor-pointer font-semibold shadow-sm shadow-indigo-900/15 focus-visible:ring-2 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-0",
+          "cursor-pointer font-semibold shadow-sm focus-visible:ring-2 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-0",
           isWritePage
-            ? "bg-indigo-600 text-white ring-2 ring-indigo-300/80 hover:bg-indigo-500 focus-visible:ring-indigo-200/80 dark:bg-indigo-500 dark:ring-indigo-400/50 dark:hover:bg-indigo-400/90 dark:focus-visible:ring-indigo-500/30"
-            : "bg-indigo-600 text-white hover:bg-indigo-500 focus-visible:ring-indigo-200/80 dark:bg-indigo-500 dark:hover:bg-indigo-400 dark:focus-visible:ring-indigo-500/30",
+            ? "bg-indigo-600 text-white ring-2 ring-indigo-300/70 shadow-indigo-900/10 hover:bg-indigo-500 focus-visible:ring-indigo-200/80 dark:bg-indigo-500 dark:ring-indigo-400/45 dark:hover:bg-indigo-400"
+            : "bg-indigo-500 text-white shadow-indigo-900/10 hover:bg-indigo-600 focus-visible:ring-indigo-200/80 dark:bg-indigo-600/90 dark:hover:bg-indigo-500",
         ].join(" ")}
       >
         글쓰기

@@ -13,8 +13,12 @@ import {
 import { jsonAuthHeaders } from "@/lib/auth-headers";
 import { ProfileAvatar } from "@/components/ProfileAvatar";
 import { AppNotice } from "@/components/AppNotice";
+import { CategoryLabel } from "@/components/CategoryLabel";
 import { messageFromApiDetail } from "@/lib/api-message";
+import { isBoardCategory, isNoticeCategory } from "@/lib/board-categories";
+import { categoryDisplayName } from "@/lib/categories";
 import { formatPostDateLabel } from "@/lib/format-datetime";
+import { CARD_STRONG, LIST_PANEL } from "@/lib/ui-classes";
 import { toast } from "@/lib/toast";
 
 type UserMe = {
@@ -45,6 +49,12 @@ type Post = {
   category: string;
   options: string;
   post_kind?: string;
+  is_notice?: boolean;
+  is_board_post?: boolean;
+  view_count?: number;
+  like_count?: number;
+  vote_count?: number;
+  comment_count?: number;
   user_id?: number | null;
   author_nickname?: string | null;
   created_at: string;
@@ -78,61 +88,278 @@ function profileDisplayName(user: UserMe): string {
   return local || "회원";
 }
 
-function PostKindBadge({ postKind }: { postKind?: string }) {
-  if ((postKind ?? "community") === "ai") {
-    return (
-      <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] text-sky-900 dark:bg-[#2b1f4a] dark:text-white">
-        AI
-      </span>
-    );
-  }
-  return (
-    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-800 dark:bg-[#16283a] dark:text-[#4A90E2]">
-      투표
-    </span>
-  );
+const MYPAGE_OWNED_GRID =
+  "grid grid-cols-[minmax(6.25rem,6.75rem)_minmax(0,1fr)_minmax(3.5rem,4rem)_minmax(2.5rem,3rem)_minmax(2.25rem,2.75rem)_minmax(2.25rem,2.75rem)] items-center gap-1.5 md:gap-2";
+
+const MYPAGE_COMMENTED_GRID =
+  "grid grid-cols-[minmax(6.25rem,6.75rem)_minmax(0,1fr)_minmax(3.5rem,4.5rem)_minmax(3.5rem,4rem)_minmax(2.5rem,3rem)_minmax(2.25rem,2.75rem)_minmax(2.25rem,2.75rem)] items-center gap-1.5 md:gap-2";
+
+function fmtNumber(n: number | null | undefined): string {
+  const v = typeof n === "number" && Number.isFinite(n) ? n : 0;
+  return new Intl.NumberFormat("ko-KR").format(v);
 }
 
-function ConcernPostCard({
-  post,
-  variant,
-  showAuthor,
+function hasPostImage(post: Pick<Post, "content">): boolean {
+  return /!\[[^\]]*]\([^)]+\)/.test(post.content);
+}
+
+function authorLabel(post: Post): string {
+  if (post.author_nickname) return post.author_nickname;
+  if (post.user_id != null) return `사용자 #${post.user_id}`;
+  return "익명";
+}
+
+function MyPostsBoardList({
+  posts,
+  mode,
+  selectedIds,
+  onToggleSelect,
+  onToggleSelectAll,
 }: {
-  post: Post;
-  variant: "published" | "draft" | "commented";
-  showAuthor?: boolean;
+  posts: Post[];
+  mode: "owned" | "commented";
+  selectedIds: Set<number>;
+  onToggleSelect: (id: number) => void;
+  onToggleSelectAll: () => void;
 }) {
-  const isDraft = variant === "draft";
+  const allSelected = posts.length > 0 && posts.every((p) => selectedIds.has(p.id));
+  const desktopGrid =
+    mode === "owned" ? MYPAGE_OWNED_GRID : MYPAGE_COMMENTED_GRID;
+
+  const headerCells = (
+    <>
+      <div className="truncate">카테고리</div>
+      <div className="truncate text-left">제목</div>
+      {mode === "commented" ? (
+        <div className="truncate text-right">글쓴이</div>
+      ) : null}
+      <div className="truncate text-right">날짜</div>
+      <div className="truncate text-right">조회</div>
+      <div className="truncate text-right">좋아요</div>
+      <div className="truncate text-right">투표</div>
+    </>
+  );
+
   return (
-    <Link
-      href={`/posts/${post.id}`}
-      className={[
-        "block rounded-lg border px-4 py-3 transition hover:bg-zinc-50 dark:hover:bg-sky-950/35",
-        isDraft
-          ? "border-amber-200/90 bg-amber-50/50 dark:border-amber-900/40 dark:bg-amber-950/20"
-          : "border-zinc-200 bg-white dark:border-[#223141] dark:bg-[#1B2733]",
-      ].join(" ")}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-semibold text-zinc-900 dark:text-white">{post.title}</span>
-        {isDraft ? (
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900 dark:bg-amber-950/50 dark:text-amber-100">
-            임시저장
-          </span>
-        ) : null}
-        <PostKindBadge postKind={post.post_kind} />
+    <>
+      <div
+        className={`hidden px-4 py-2 text-[11px] font-semibold text-zinc-500 dark:text-[#94a3b8] sm:block ${CARD_STRONG}`}
+      >
+        {mode === "owned" ? (
+          <div className="flex items-center gap-2">
+            <div className="flex w-9 shrink-0 justify-center">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={onToggleSelectAll}
+                aria-label="전체 선택"
+                className="h-4 w-4 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500/40 dark:border-[#334155]"
+              />
+            </div>
+            <div className={`min-w-0 flex-1 ${desktopGrid}`}>{headerCells}</div>
+          </div>
+        ) : (
+          <div className={desktopGrid}>{headerCells}</div>
+        )}
       </div>
-      <div className="mt-1 text-sm text-zinc-700 dark:text-[#AFC6D8]">
-        {showAuthor && post.author_nickname ? (
-          <span>{post.author_nickname} · </span>
-        ) : null}
-        {post.category}
-        {post.options ? ` · ${post.options}` : ""}
-        {isDraft && (post.ai_recommended ?? "").trim()
-          ? ` · 추천 ${post.ai_recommended}`
-          : ""}
-      </div>
-    </Link>
+
+      <ul className={`list-none p-0 ${LIST_PANEL}`}>
+        {posts.map((post) => {
+          const kind = (post.post_kind ?? "community") as string;
+          const isAi = kind === "ai";
+          const isDraft = post.is_published === false;
+          const isNotice =
+            post.is_notice === true || isNoticeCategory(post.category);
+          const isBoard =
+            post.is_board_post === true || isBoardCategory(post.category);
+          const selected = selectedIds.has(post.id);
+
+          return (
+            <li key={post.id}>
+              <div
+                className={[
+                  "flex items-stretch px-4 py-3.5 transition sm:py-3",
+                  "hover:bg-sky-50/75 dark:hover:bg-sky-950/30",
+                  selected ? "bg-sky-50/50 dark:bg-sky-950/20" : "",
+                ].join(" ")}
+              >
+                {mode === "owned" ? (
+                  <label className="mr-3 flex shrink-0 items-center self-center sm:mr-2">
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => onToggleSelect(post.id)}
+                      aria-label={`${post.title} 선택`}
+                      className="h-4 w-4 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-500/40 dark:border-[#334155]"
+                    />
+                  </label>
+                ) : null}
+
+                <Link
+                  href={`/posts/${post.id}`}
+                  className={[
+                    "group min-w-0 focus-visible:outline-none",
+                    mode === "owned" ? "flex-1" : "w-full",
+                  ].join(" ")}
+                >
+                  <div className="sm:hidden">
+                    <div className="flex min-w-0 flex-nowrap items-center gap-x-1.5 overflow-hidden text-[11px]">
+                      <span className="min-w-0 flex-1 truncate font-medium text-zinc-600 dark:text-[#9bb3c7]">
+                        <CategoryLabel category={post.category} />
+                      </span>
+                      {isDraft ? (
+                        <span className="shrink-0 font-semibold text-amber-700 dark:text-amber-300">
+                          임시저장
+                        </span>
+                      ) : null}
+                      {isNotice ? (
+                        <span className="shrink-0 font-semibold text-amber-700 dark:text-amber-300">
+                          공지
+                        </span>
+                      ) : null}
+                      {isAi ? (
+                        <span className="shrink-0 font-semibold text-indigo-600 dark:text-indigo-300">
+                          AI
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <h3 className="mt-2 line-clamp-2 text-sm font-bold leading-snug tracking-tight text-zinc-950 transition group-hover:text-sky-900 dark:text-white">
+                      {post.title}
+                      {(post.comment_count ?? 0) > 0 ? (
+                        <span className="ml-1 text-[12px] font-semibold text-zinc-500 dark:text-[#9bb3c7] tabular-nums">
+                          ({post.comment_count})
+                        </span>
+                      ) : null}
+                    </h3>
+
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-zinc-500 dark:text-[#9bb3c7]">
+                      {mode === "commented" ? (
+                        <>
+                          <span className="font-medium text-zinc-700 dark:text-sky-200/90">
+                            {authorLabel(post)}
+                          </span>
+                          <span className="text-zinc-300 dark:text-sky-800/80">·</span>
+                        </>
+                      ) : null}
+                      <span className="tabular-nums">
+                        {formatPostDateLabel(post.created_at)}
+                      </span>
+                      <span className="text-zinc-300 dark:text-sky-800/80">·</span>
+                      <span className="tabular-nums">
+                        조회 {fmtNumber(post.view_count)} · ♥ {fmtNumber(post.like_count)}
+                        {!isBoard ? (
+                          <> · 투표 {fmtNumber(post.vote_count)}</>
+                        ) : null}
+                      </span>
+                    </div>
+
+                    {!isBoard && post.options.trim() ? (
+                      <p className="mt-1 line-clamp-1 text-[11px] text-sky-800/75 dark:text-sky-200/70">
+                        <span className="font-semibold text-sky-600/90 dark:text-sky-300/90">
+                          선택지
+                        </span>{" "}
+                        {post.options}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="hidden sm:block">
+                    <div className={`${desktopGrid} overflow-hidden`}>
+                      <div className="min-w-0 overflow-hidden">
+                        <div className="flex min-w-0 flex-nowrap items-center gap-x-1.5 text-[11px]">
+                          <span className="shrink-0 whitespace-nowrap font-medium text-zinc-600 dark:text-[#9bb3c7]">
+                            {categoryDisplayName(post.category)}
+                          </span>
+                          {isDraft ? (
+                            <span className="shrink-0 font-semibold text-amber-700 dark:text-amber-300">
+                              임시저장
+                            </span>
+                          ) : null}
+                          {isNotice ? (
+                            <span className="shrink-0 font-semibold text-amber-700 dark:text-amber-300">
+                              공지
+                            </span>
+                          ) : null}
+                          {isAi ? (
+                            <span className="shrink-0 font-semibold text-indigo-600 dark:text-indigo-300">
+                              AI
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="min-w-0 overflow-hidden">
+                        <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+                          {hasPostImage(post) ? (
+                            <span
+                              className="shrink-0 text-amber-700/90 dark:text-amber-300/90"
+                              title="사진 포함"
+                              aria-label="사진 포함"
+                            >
+                              <svg
+                                viewBox="0 0 24 24"
+                                width="16"
+                                height="16"
+                                fill="none"
+                                aria-hidden
+                              >
+                                <path
+                                  d="M4 7.5A2.5 2.5 0 0 1 6.5 5h2.2c.43 0 .83-.2 1.07-.55l.86-1.3c.23-.35.63-.56 1.06-.56h.62c.43 0 .83.2 1.06.56l.86 1.3c.24.35.64.55 1.07.55h2.2A2.5 2.5 0 0 1 20 7.5v10A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5v-10Z"
+                                  stroke="currentColor"
+                                  strokeWidth="1.6"
+                                />
+                                <path
+                                  d="M9 13.5l1.7 1.7 3.8-3.8 3.5 3.5"
+                                  stroke="currentColor"
+                                  strokeWidth="1.6"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                                <path
+                                  d="M15.5 10a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"
+                                  fill="currentColor"
+                                />
+                              </svg>
+                            </span>
+                          ) : null}
+                          <span className="min-w-0 flex-1 truncate text-sm font-bold tracking-tight text-zinc-950 transition group-hover:text-sky-900 dark:text-white">
+                            {post.title}
+                            {(post.comment_count ?? 0) > 0 ? (
+                              <span className="ml-1 text-[11px] font-semibold text-zinc-500 dark:text-[#9bb3c8] tabular-nums">
+                                [{post.comment_count}]
+                              </span>
+                            ) : null}
+                          </span>
+                        </div>
+                      </div>
+
+                      {mode === "commented" ? (
+                        <div className="truncate text-right text-[11px] text-zinc-500 dark:text-[#9bb3c7]">
+                          {authorLabel(post)}
+                        </div>
+                      ) : null}
+                      <div className="truncate text-right text-[11px] tabular-nums text-zinc-500 dark:text-[#9bb3c7]">
+                        {formatPostDateLabel(post.created_at)}
+                      </div>
+                      <div className="truncate text-right text-[11px] tabular-nums text-zinc-500 dark:text-[#9bb3c7]">
+                        {fmtNumber(post.view_count)}
+                      </div>
+                      <div className="truncate text-right text-[11px] tabular-nums text-zinc-500 dark:text-[#9bb3c7]">
+                        {fmtNumber(post.like_count)}
+                      </div>
+                      <div className="truncate text-right text-[11px] tabular-nums text-zinc-500 dark:text-[#9bb3c7]">
+                        {isBoard ? "—" : fmtNumber(post.vote_count)}
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 
@@ -199,6 +426,8 @@ export default function MyPage() {
   const [blockedUsers, setBlockedUsers] = useState<BlockedUser[]>([]);
   const [blocksLoading, setBlocksLoading] = useState(true);
   const [unblockingId, setUnblockingId] = useState<number | null>(null);
+  const [selectedPostIds, setSelectedPostIds] = useState<Set<number>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const publishedPosts = useMemo(
     () => posts.filter((p) => p.is_published !== false),
@@ -311,6 +540,21 @@ export default function MyPage() {
       void loadCommentedPosts();
     }
   }, [concernTab, commentedLoaded, commentedLoading]);
+
+  useEffect(() => {
+    setSelectedPostIds(new Set());
+  }, [concernTab]);
+
+  const canBulkDelete = concernTab === "published" || concernTab === "drafts";
+
+  const togglePostSelect = (id: number) => {
+    setSelectedPostIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const toggleAccountEdit = (field: Exclude<AccountEdit, null>) => {
     setAccountEdit((prev) => (prev === field ? null : field));
@@ -446,9 +690,61 @@ export default function MyPage() {
           ? "불러오는 중..."
           : "댓글을 단 글이 없어요.";
 
+  const toggleSelectAllPosts = () => {
+    setSelectedPostIds((prev) => {
+      if (activePosts.length > 0 && activePosts.every((p) => prev.has(p.id))) {
+        return new Set();
+      }
+      return new Set(activePosts.map((p) => p.id));
+    });
+  };
+
+  const handleBulkDeletePosts = async () => {
+    if (selectedPostIds.size === 0) return;
+    const ids = [...selectedPostIds];
+    if (
+      !confirm(
+        `선택한 ${ids.length}개 글을 삭제할까요?\n삭제한 글은 복구할 수 없어요.`
+      )
+    ) {
+      return;
+    }
+    setBulkDeleting(true);
+    try {
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          const res = await fetch(`${API_BASE_URL}/posts/${id}`, {
+            method: "DELETE",
+            headers: jsonAuthHeaders(),
+          });
+          return { id, ok: res.ok };
+        })
+      );
+      const deleted = results.filter((r) => r.ok).map((r) => r.id);
+      const failed = results.length - deleted.length;
+      if (deleted.length > 0) {
+        setPosts((prev) => prev.filter((p) => !deleted.includes(p.id)));
+        setSelectedPostIds((prev) => {
+          const next = new Set(prev);
+          for (const id of deleted) next.delete(id);
+          return next;
+        });
+      }
+      if (failed === 0) {
+        toast.success(`${deleted.length}개 글을 삭제했습니다.`);
+      } else if (deleted.length > 0) {
+        toast.warning(`${deleted.length}개 삭제, ${failed}개 실패했습니다.`);
+      } else {
+        toast.error("글 삭제에 실패했습니다.");
+      }
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
   if (loading) {
     return (
-      <main className="mx-auto w-full max-w-3xl text-zinc-900 dark:text-sky-100">
+      <main className="mx-auto w-full max-w-5xl text-zinc-900 dark:text-sky-100">
         <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">
           불러오는 중...
         </div>
@@ -458,7 +754,7 @@ export default function MyPage() {
 
   if (!user) {
     return (
-      <main className="mx-auto w-full max-w-3xl text-zinc-900 dark:text-sky-100">
+      <main className="mx-auto w-full max-w-5xl text-zinc-900 dark:text-sky-100">
         <div className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-[#223141] dark:bg-[#16202A]">
           <p className="text-sm text-zinc-700 dark:text-[#AFC6D8]">
             {error || "로그인이 필요합니다."}
@@ -474,7 +770,7 @@ export default function MyPage() {
   const displayName = profileDisplayName(user);
 
   return (
-    <main className="mx-auto w-full max-w-3xl space-y-6 text-zinc-900 dark:text-sky-100">
+    <main className="mx-auto w-full max-w-5xl space-y-6 text-zinc-900 dark:text-sky-100">
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">마이페이지</h1>
         {user.is_admin ? (
@@ -788,18 +1084,35 @@ export default function MyPage() {
           </p>
         ) : null}
 
+        {canBulkDelete && activePosts.length > 0 ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-zinc-500 dark:text-[#8fa3b8]">
+              {selectedPostIds.size > 0
+                ? `${selectedPostIds.size}개 선택됨`
+                : "삭제할 글을 선택해 주세요."}
+            </p>
+            <button
+              type="button"
+              onClick={() => void handleBulkDeletePosts()}
+              disabled={selectedPostIds.size === 0 || bulkDeleting}
+              className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-800 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900/45 dark:bg-red-950/30 dark:text-red-200 dark:hover:bg-red-950/50"
+            >
+              {bulkDeleting ? "삭제 중…" : "선택 삭제"}
+            </button>
+          </div>
+        ) : null}
+
         {activePosts.length === 0 ? (
           <p className="mt-4 text-sm text-zinc-600 dark:text-[#AFC6D8]/85">{emptyMessage}</p>
         ) : (
-          <div className="mt-4 space-y-3">
-            {activePosts.map((post) => (
-              <ConcernPostCard
-                key={post.id}
-                post={post}
-                variant={concernTab === "drafts" ? "draft" : concernTab === "commented" ? "commented" : "published"}
-                showAuthor={concernTab === "commented"}
-              />
-            ))}
+          <div className="mt-4">
+            <MyPostsBoardList
+              posts={activePosts}
+              mode={concernTab === "commented" ? "commented" : "owned"}
+              selectedIds={selectedPostIds}
+              onToggleSelect={togglePostSelect}
+              onToggleSelectAll={toggleSelectAllPosts}
+            />
           </div>
         )}
       </section>

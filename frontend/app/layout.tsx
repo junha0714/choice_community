@@ -6,8 +6,8 @@ import { Suspense } from "react";
 import { AuthSessionKeeper } from "@/components/AuthSessionKeeper";
 import { CommunityShell } from "@/components/CommunityShell";
 import { HeaderNav } from "@/components/HeaderNav";
+import { HeaderSearch } from "@/components/HeaderSearch";
 import { SiteFooter } from "@/components/SiteFooter";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { ToastHost } from "@/components/ToastHost";
 import { THEME_STORAGE_KEY } from "@/lib/theme-storage";
 import {
@@ -89,20 +89,22 @@ export default function RootLayout({
           본문으로 건너뛰기
         </a>
         <header className="sticky top-0 z-50 border-b border-sky-200/60 bg-white/80 shadow-sm shadow-sky-900/5 backdrop-blur-md dark:border-sky-900/50 dark:bg-zinc-950/75 dark:shadow-sky-950/20">
-          <div
-            className={`flex items-center justify-between gap-3 py-3 sm:gap-4 ${SHELL_WIDTH_CLASS}`}
-          >
-            <Link
-              href="/"
-              className="group shrink-0 text-lg font-semibold tracking-tight"
-            >
-              <span className="bg-linear-to-r from-sky-600 via-sky-500 to-cyan-500 bg-clip-text text-transparent">
-                {SITE_NAME}
-              </span>
-            </Link>
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 sm:gap-3">
-              <ThemeToggle />
-              <HeaderNav />
+          <div className={`relative ${SHELL_WIDTH_CLASS}`}>
+            <div className="flex items-center gap-2 py-3 sm:gap-3">
+              <Link
+                href="/"
+                className="group shrink-0 text-lg font-semibold tracking-tight"
+              >
+                <span className="bg-linear-to-r from-sky-600 via-sky-500 to-cyan-500 bg-clip-text text-transparent">
+                  {SITE_NAME}
+                </span>
+              </Link>
+              <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
+                <Suspense fallback={null}>
+                  <HeaderSearch />
+                </Suspense>
+                <HeaderNav />
+              </div>
             </div>
           </div>
         </header>

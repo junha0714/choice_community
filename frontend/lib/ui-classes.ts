@@ -31,7 +31,7 @@ export const LINK_MORE =
 
 /** 헤더·툴바 공통 (높이·패딩 통일) */
 export const BTN_NAV =
-  "inline-flex shrink-0 items-center justify-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors";
+  "inline-flex shrink-0 items-center justify-center rounded-lg px-3 py-1.5 text-sm font-medium transition-colors";
 
 export const BTN_PRIMARY =
   "inline-flex min-h-[2.5rem] items-center justify-center rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-500 dark:bg-sky-500 dark:hover:bg-sky-400";
