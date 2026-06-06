@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { homeFeedHref } from "@/lib/home-feed";
-import { SHELL_WIDTH_CLASS, SITE_NAME } from "@/lib/site";
-
-const FOOTER_TAGLINE = "AI와 사람들의 의견으로 더 나은 선택";
+import { SHELL_WIDTH_CLASS, SITE_NAME, SITE_TAGLINE } from "@/lib/site";
 
 export function SiteFooter() {
   const year = new Date().getFullYear();
@@ -16,7 +14,7 @@ export function SiteFooter() {
               {SITE_NAME}
             </p>
             <p className="mt-1 text-sm text-zinc-600 dark:text-[#9bb3c7]">
-              {FOOTER_TAGLINE}
+              {SITE_TAGLINE}
             </p>
           </div>
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { SITE_NAME, SITE_TAGLINE } from "@/lib/site";
+import { SITE_NAME } from "@/lib/site";
 
 type AuthFormShellProps = {
   title: string;
@@ -28,9 +28,6 @@ export function AuthFormShell({
             {SITE_NAME}
           </span>
         </Link>
-        <p className="mt-1.5 text-xs leading-relaxed text-zinc-500 dark:text-[#9bb3c7]">
-          {SITE_TAGLINE}
-        </p>
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-sky-200/70 bg-white shadow-sm shadow-sky-900/5 dark:border-sky-900/40 dark:bg-[#16202A] dark:shadow-sky-950/20">

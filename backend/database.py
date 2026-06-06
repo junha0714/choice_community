@@ -17,7 +17,11 @@ if not DATABASE_URL:
         "환경 변수로 설정하세요."
     )
 
-engine = create_engine(DATABASE_URL)
+_engine_kwargs: dict = {"pool_pre_ping": True}
+if DATABASE_URL.startswith("postgresql"):
+    _engine_kwargs["pool_size"] = 5
+    _engine_kwargs["max_overflow"] = 10
+engine = create_engine(DATABASE_URL, **_engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

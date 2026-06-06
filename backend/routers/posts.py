@@ -35,6 +35,7 @@ from schemas import (
     LikeToggleResponse,
     MessageResponse,
     SimilarPostBrief,
+    PostPageDataResponse,
 )
 from post_utils import post_option_list, tags_list
 from app_helpers import (
@@ -53,6 +54,101 @@ from app_helpers import (
 )
 
 router = APIRouter(tags=["posts"])
+
+
+def _comments_for_post(
+    db: Session,
+    post_id: int,
+    current_user: User | None,
+) -> list[CommentResponse]:
+    q = db.query(Comment).filter(
+        Comment.post_id == post_id,
+        Comment.deleted_at.is_(None),
+    )
+    if current_user:
+        blocked = _get_blocked_ids(db, current_user.id)
+        if blocked:
+            q = q.filter(or_(Comment.user_id.is_(None), ~Comment.user_id.in_(blocked)))
+    comments = q.order_by(Comment.id.asc()).all()
+    ids = {c.user_id for c in comments if c.user_id}
+    nick_map = _nickname_map(db, ids)
+    cids = [c.id for c in comments]
+    reply_map = _comment_reply_counts(db, cids)
+    viewer_id = current_user.id if current_user else None
+    viewer_admin = (
+        bool(getattr(current_user, "is_admin", False)) if current_user else False
+    )
+    return [
+        _comment_to_response(
+            c,
+            nick_map,
+            reply_map,
+            viewer_user_id=viewer_id,
+            viewer_is_admin=viewer_admin,
+        )
+        for c in comments
+    ]
+
+
+def _vote_counts_for_post(db: Session, post: Post) -> list[VoteCountResponse]:
+    options = post_option_list(post)
+    if not options:
+        return []
+    rows = (
+        db.query(Vote.selected_option, func.count(Vote.id))
+        .filter(Vote.post_id == post.id)
+        .group_by(Vote.selected_option)
+        .all()
+    )
+    count_map = {str(opt).strip(): int(cnt) for opt, cnt in rows}
+    return [VoteCountResponse(option=o, count=count_map.get(o, 0)) for o in options]
+
+
+def _query_similar_posts(
+    db: Session,
+    post_id: int,
+    current_user: User | None,
+    *,
+    limit: int = 8,
+    offset: int = 0,
+) -> list[SimilarPostBrief]:
+    limit = min(max(int(limit or 8), 1), 20)
+    offset = max(int(offset or 0), 0)
+    src = _get_post_or_404(db, post_id, current_user)
+
+    base = _posts_list_query(db, current_user).filter(Post.id != src.id)
+
+    src_tags = tags_list(src)
+    wrapped = func.concat(",", func.coalesce(Post.tags, ""), ",")
+    tag_terms = [(t or "").strip().lower()[:30] for t in src_tags]
+    tag_terms = [t for t in tag_terms if t]
+
+    tag_score_expr = literal(0)
+    for t in tag_terms:
+        tag_score_expr = tag_score_expr + case(
+            (wrapped.like(f"%,{t},%"), 1),
+            else_=0,
+        )
+
+    category_bonus_expr = case((Post.category == src.category, 2), else_=0)
+    score_expr = tag_score_expr + category_bonus_expr
+
+    if tag_terms:
+        base = base.filter(or_(tag_score_expr > 0, Post.category == src.category))
+    else:
+        base = base.filter(Post.category == src.category)
+
+    rows = (
+        base.add_columns(score_expr.label("score"))
+        .order_by(func.coalesce(score_expr, 0).desc(), Post.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    posts = [p for (p, _score) in rows]
+    return [_post_to_similar_brief(p) for p in posts]
+
 
 @router.post("/posts", response_model=PostResponse)
 def create_post(
@@ -382,6 +478,95 @@ def get_post(
     )
 
 
+@router.get("/posts/{post_id}/page-data", response_model=PostPageDataResponse)
+def get_post_page_data(
+    post_id: int,
+    count_view: bool = Query(True, description="false면 조회수를 올리지 않음"),
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
+):
+    """글 상세 화면용 데이터(글·댓글·투표·비슷한 글)를 한 번에 반환."""
+    post = _get_post_or_404(db, post_id, current_user)
+
+    if (
+        current_user
+        and post.user_id == current_user.id
+        and _vote_deadline_passed(post)
+    ):
+        already = (
+            db.query(Notification.id)
+            .filter(
+                Notification.user_id == current_user.id,
+                Notification.post_id == post_id,
+                Notification.kind == "vote_closed",
+            )
+            .first()
+        )
+        if not already:
+            title_short = (post.title or "")[:80]
+            _notify(
+                db,
+                user_id=current_user.id,
+                kind="vote_closed",
+                title="투표가 마감되었어요",
+                body=f"글: {title_short}",
+                post_id=post_id,
+            )
+
+    if count_view:
+        post.view_count = (getattr(post, "view_count", None) or 0) + 1
+        db.commit()
+        db.refresh(post)
+
+    ids = {post.user_id} if post.user_id else set()
+    nick_map = _nickname_map(db, ids)
+
+    liked_by_me: bool | None = None
+    if current_user:
+        liked_by_me = (
+            db.query(PostLike)
+            .filter(PostLike.post_id == post_id, PostLike.user_id == current_user.id)
+            .first()
+            is not None
+        )
+
+    comment_count = (
+        db.query(func.count(Comment.id))
+        .filter(Comment.deleted_at.is_(None), Comment.post_id == post_id)
+        .scalar()
+        or 0
+    )
+    vote_count = (
+        db.query(func.count(Vote.id)).filter(Vote.post_id == post_id).scalar() or 0
+    )
+
+    post_resp = _post_to_response(
+        post,
+        nick_map,
+        liked_by_me=liked_by_me,
+        comment_count=int(comment_count),
+        vote_count=int(vote_count),
+    )
+
+    my_vote: Vote | None = None
+    if current_user:
+        my_vote = (
+            db.query(Vote)
+            .filter(Vote.post_id == post_id, Vote.user_id == current_user.id)
+            .first()
+        )
+
+    return PostPageDataResponse(
+        post=post_resp,
+        comments=_comments_for_post(db, post_id, current_user),
+        vote_counts=_vote_counts_for_post(db, post),
+        my_vote=my_vote,
+        similar=_query_similar_posts(
+            db, post_id, current_user, limit=8, offset=0
+        ),
+    )
+
+
 @router.get("/posts/{post_id}/similar", response_model=list[SimilarPostBrief])
 def get_similar_posts(
     post_id: int,
@@ -390,51 +575,9 @@ def get_similar_posts(
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_current_user_optional),
 ):
-    """
-    비슷한 고민 글 추천 (MVP):
-    - 태그 겹침 개수 + 카테고리 동일 보너스로 점수화
-    - 삭제/숨김/차단 필터는 목록과 동일하게 적용
-    """
-    limit = min(max(int(limit or 8), 1), 20)
-    offset = max(int(offset or 0), 0)
-    src = _get_post_or_404(db, post_id, current_user)
-
-    base = _posts_list_query(db, current_user).filter(Post.id != src.id)
-
-    src_tags = tags_list(src)
-    wrapped = func.concat(",", func.coalesce(Post.tags, ""), ",")
-    tag_terms = [(t or "").strip().lower()[:30] for t in src_tags]
-    tag_terms = [t for t in tag_terms if t]
-
-    # tag overlap score
-    tag_score_expr = literal(0)
-    for t in tag_terms:
-        tag_score_expr = tag_score_expr + case(
-            (wrapped.like(f"%,{t},%"), 1),
-            else_=0,
-        )
-
-    category_bonus_expr = case((Post.category == src.category, 2), else_=0)
-    score_expr = tag_score_expr + category_bonus_expr
-
-    # Return only meaningful matches:
-    # - If src has tags: require at least 1 tag overlap OR same category
-    # - If src has no tags: require same category
-    if tag_terms:
-        base = base.filter(or_(tag_score_expr > 0, Post.category == src.category))
-    else:
-        base = base.filter(Post.category == src.category)
-
-    rows = (
-        base.add_columns(score_expr.label("score"))
-        .order_by(func.coalesce(score_expr, 0).desc(), Post.id.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
+    return _query_similar_posts(
+        db, post_id, current_user, limit=limit, offset=offset
     )
-
-    posts = [p for (p, _score) in rows]
-    return [_post_to_similar_brief(p) for p in posts]
 
 
 @router.post("/posts/{post_id}/like", response_model=LikeToggleResponse)
@@ -560,35 +703,7 @@ def get_comments(
     current_user: User | None = Depends(get_current_user_optional),
 ):
     _get_post_or_404(db, post_id, current_user)
-    q = db.query(Comment).filter(
-        Comment.post_id == post_id,
-        Comment.deleted_at.is_(None),
-    )
-    if current_user:
-        blocked = _get_blocked_ids(db, current_user.id)
-        if blocked:
-            q = q.filter(
-                or_(Comment.user_id.is_(None), ~Comment.user_id.in_(blocked))
-            )
-    comments = q.order_by(Comment.id.asc()).all()
-    ids = {c.user_id for c in comments if c.user_id}
-    nick_map = _nickname_map(db, ids)
-    cids = [c.id for c in comments]
-    reply_map = _comment_reply_counts(db, cids)
-    viewer_id = current_user.id if current_user else None
-    viewer_admin = (
-        bool(getattr(current_user, "is_admin", False)) if current_user else False
-    )
-    return [
-        _comment_to_response(
-            c,
-            nick_map,
-            reply_map,
-            viewer_user_id=viewer_id,
-            viewer_is_admin=viewer_admin,
-        )
-        for c in comments
-    ]
+    return _comments_for_post(db, post_id, current_user)
 @router.post("/posts/{post_id}/votes", response_model=VoteResponse)
 def create_vote(
     post_id: int,
@@ -675,16 +790,7 @@ def get_vote_counts(
     current_user: User | None = Depends(get_current_user_optional),
 ):
     post = _get_post_or_404(db, post_id, current_user)
-
-    options = post_option_list(post)
-    votes = db.query(Vote).filter(Vote.post_id == post_id).all()
-
-    results = []
-    for option in options:
-        count = sum(1 for vote in votes if vote.selected_option.strip() == option)
-        results.append({"option": option, "count": count})
-
-    return results
+    return _vote_counts_for_post(db, post)
 @router.post("/posts/{post_id}/publish", response_model=PostResponse)
 def publish_post(
     post_id: int,

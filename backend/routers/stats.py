@@ -9,12 +9,13 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import Post, Comment, Vote
 from typing import Sequence
-from categories import ALLOWED_CATEGORIES, BOARD_CATEGORIES, normalize_category
+from categories import ALLOWED_CATEGORIES, BOARD_CATEGORIES, CHOICE_CATEGORIES, normalize_category
 from schemas import (
     CategoryStat,
     PopularPostBrief,
     PopularPostByViewsBrief,
     RecentCommentBrief,
+    ShellSidebarResponse,
     StatsSummary,
     TrendingPostBrief,
     TrendingPostsBundle,
@@ -168,6 +169,16 @@ def stats_trending_posts(
         by_votes=_trending_briefs(db, vote_rows),
         by_views=_trending_briefs(db, view_rows),
         by_likes=_trending_briefs(db, like_rows),
+    )
+
+
+@router.get("/stats/shell", response_model=ShellSidebarResponse)
+def stats_shell(db: Session = Depends(get_db)):
+    """사이드바용 카테고리·통계·트렌딩 (한 번에)."""
+    return ShellSidebarResponse(
+        choice_categories=list(CHOICE_CATEGORIES),
+        category_stats=stats_categories(db),
+        trending=stats_trending_posts(limit=5, db=db),
     )
 
 

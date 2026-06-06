@@ -180,12 +180,11 @@ export default function MainClient() {
   return (
     <div className={PAGE_STACK}>
       <section className={CARD}>
-        <p className="text-[11px] font-medium text-sky-600/90 dark:text-sky-400/85">
-          {SITE_NAME}
-        </p>
-        <h1 className="mt-1 text-lg font-bold tracking-tight text-zinc-900 dark:text-sky-50 sm:text-xl">
-          AI와 사람들 의견으로
-          <br className="sm:hidden" /> 더 나은 선택
+        <h1 className="text-lg font-bold tracking-tight sm:text-xl">
+          <span className="text-zinc-900 dark:text-sky-50">혼자 고민하지 말고 </span>
+          <span className="bg-linear-to-r from-sky-600 via-sky-500 to-cyan-500 bg-clip-text text-transparent">
+            {SITE_NAME}
+          </span>
         </h1>
         <p className={`mt-1.5 ${TEXT_MUTED}`}>
           투표 · AI 추천 · 댓글로 고민을 정리해 보세요

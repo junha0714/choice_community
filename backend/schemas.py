@@ -270,6 +270,14 @@ class SimilarPostBrief(BaseModel):
         from_attributes = True
 
 
+class PostPageDataResponse(BaseModel):
+    post: PostResponse
+    comments: List["CommentResponse"]
+    vote_counts: List["VoteCountResponse"]
+    my_vote: "VoteResponse | None" = None
+    similar: List[SimilarPostBrief]
+
+
 class LikeToggleResponse(BaseModel):
     liked: bool
     like_count: int
@@ -492,6 +500,10 @@ class TrendingPostsBundle(BaseModel):
     by_likes: list[TrendingPostBrief] = []
 
 
+class ShellSidebarResponse(BaseModel):
+    choice_categories: List[str]
+    category_stats: List["CategoryStat"]
+    trending: TrendingPostsBundle
 class RecentCommentBrief(BaseModel):
     id: int
     content: str

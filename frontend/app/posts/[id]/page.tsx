@@ -555,6 +555,48 @@ export default function PostDetailPage() {
     return m;
   }, [comments]);
 
+  const fetchPageData = async () => {
+    if (!params?.id) return;
+    setPostLoading(true);
+    setPostError("");
+    try {
+      const countView = !viewCountedRef.current;
+      if (countView) viewCountedRef.current = true;
+      const qs = countView ? "" : "?count_view=false";
+      const token = getStoredToken();
+      const headers: HeadersInit = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(
+        `${API_BASE_URL}/posts/${params.id}/page-data${qs}`,
+        { headers }
+      );
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || "게시글을 불러오지 못했습니다.");
+      }
+      const data = (await res.json()) as {
+        post: Post;
+        comments?: Comment[];
+        vote_counts?: VoteCount[];
+        my_vote?: MyVote | null;
+        similar?: SimilarPostBrief[];
+      };
+      setPost(data.post);
+      setComments(Array.isArray(data.comments) ? data.comments : []);
+      setVoteCounts(Array.isArray(data.vote_counts) ? data.vote_counts : []);
+      setMyVote(data.my_vote ?? null);
+      const similar = Array.isArray(data.similar) ? data.similar : [];
+      setSimilarPosts(similar.slice(0, 4));
+      setSimilarNextOffset(similar.length > 0 ? Math.min(4, similar.length) : 0);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "게시글 조회 실패";
+      setPostError(message);
+      setPost(null);
+    } finally {
+      setPostLoading(false);
+    }
+  };
+
   const fetchPost = async (opts?: { countView?: boolean }) => {
     if (!params?.id) return;
     setPostLoading(true);
@@ -968,11 +1010,7 @@ export default function PostDetailPage() {
     setAiAnswer("");
     setAiError("");
     setSimilarNextOffset(0);
-    fetchPost();
-    fetchComments();
-    fetchVotes();
-    fetchMyVote();
-    fetchSimilar(0);
+    void fetchPageData();
   }, [params?.id]);
 
   useEffect(() => {
@@ -997,7 +1035,7 @@ export default function PostDetailPage() {
         setIsAdmin(false);
       })
       .finally(() => setMeResolved(true));
-  }, [params?.id]);
+  }, [hasToken]);
 
   const shouldLoadAiTranscript =
     !!post &&

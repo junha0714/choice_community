@@ -16,6 +16,16 @@ import {
   type HomeFeed,
 } from "@/lib/home-feed";
 import { LINK_MORE } from "@/lib/ui-classes";
+import { readClientCache, writeClientCache } from "@/lib/client-cache";
+
+const SHELL_CACHE_KEY = "shell-sidebar";
+const SHELL_CACHE_TTL_MS = 90_000;
+
+type ShellSidebarPayload = {
+  choice_categories: string[];
+  category_stats: { category: string; count: number }[];
+  trending: TrendingPostsBundle;
+};
 
 type CategoryStat = { category: string; count: number };
 type TrendingPost = {
@@ -125,31 +135,45 @@ export function CommunityShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (hideShell) return;
+
+    const cached = readClientCache<ShellSidebarPayload>(
+      SHELL_CACHE_KEY,
+      SHELL_CACHE_TTL_MS
+    );
+    if (cached) {
+      const countMap: Record<string, number> = {};
+      for (const row of cached.category_stats) {
+        countMap[row.category] = row.count;
+      }
+      const choiceList =
+        cached.choice_categories.length > 0
+          ? cached.choice_categories
+          : [...CHOICE_CATEGORY_ORDER];
+      setCategories(
+        choiceList.map((category) => ({
+          category,
+          count: countMap[category] ?? 0,
+        }))
+      );
+      setTrending(cached.trending);
+    }
+
     let cancelled = false;
     const load = async () => {
       try {
-        const [metaRes, statsRes, trendingRes] = await Promise.all([
-          fetch(`${API_BASE_URL}/meta/categories`),
-          fetch(`${API_BASE_URL}/stats/categories`),
-          fetch(`${API_BASE_URL}/stats/trending-posts?limit=5`),
-        ]);
-        if (cancelled) return;
-
-        let choiceList: string[] = [...CHOICE_CATEGORY_ORDER];
-        if (metaRes.ok) {
-          const meta = (await metaRes.json()) as { choice_categories?: string[] };
-          if (Array.isArray(meta.choice_categories) && meta.choice_categories.length > 0) {
-            choiceList = meta.choice_categories;
-          }
-        }
+        const res = await fetch(`${API_BASE_URL}/stats/shell`);
+        if (cancelled || !res.ok) return;
+        const payload = (await res.json()) as ShellSidebarPayload;
+        writeClientCache(SHELL_CACHE_KEY, payload);
 
         const countMap: Record<string, number> = {};
-        if (statsRes.ok) {
-          const stats = (await statsRes.json()) as CategoryStat[];
-          for (const row of stats) {
-            countMap[row.category] = row.count;
-          }
+        for (const row of payload.category_stats) {
+          countMap[row.category] = row.count;
         }
+        const choiceList =
+          payload.choice_categories.length > 0
+            ? payload.choice_categories
+            : [...CHOICE_CATEGORY_ORDER];
 
         setCategories(
           choiceList.map((category) => ({
@@ -157,8 +181,7 @@ export function CommunityShell({ children }: { children: ReactNode }) {
             count: countMap[category] ?? 0,
           }))
         );
-
-        if (trendingRes.ok) setTrending(await trendingRes.json());
+        setTrending(payload.trending);
       } catch {
         /* ignore */
       }
