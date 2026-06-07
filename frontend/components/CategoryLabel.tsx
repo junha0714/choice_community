@@ -20,7 +20,7 @@ const CATEGORY_ICONS: Record<string, LucideIcon> = {
   "패션·뷰티": Shirt,
   "진로·커리어": GraduationCap,
   "연애·인간관계": Heart,
-  취미여가: Gamepad2,
+  "취미·여가": Gamepad2,
   "주거·생활": Home,
   "쇼핑·소비": ShoppingBag,
   "여행·이동": Plane,

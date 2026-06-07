@@ -128,6 +128,11 @@ export const ContentComposer = forwardRef<
             <textarea
               key={b.id}
               value={b.text}
+              spellCheck={false}
+              autoCorrect="off"
+              data-gramm="false"
+              data-gramm_editor="false"
+              data-enable-grammarly="false"
               onChange={(e) =>
                 onChange(
                   blocks.map((x) =>

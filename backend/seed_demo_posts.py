@@ -65,7 +65,7 @@ SAMPLES: list[dict] = [
     {
         "title": "운동 루틴 어떻게 잡을까요?",
         "content": "헬스 vs 러닝 vs 홈트 중에서 꾸준히 할 수 있는 걸 고르고 싶어요.",
-        "category": "취미여가",
+        "category": "취미·여가",
         "options": ["헬스", "러닝", "홈트"],
         "tags": "운동,루틴",
         "post_kind": "community",
@@ -73,7 +73,7 @@ SAMPLES: list[dict] = [
     {
         "title": "노트북 살 때 CPU vs RAM",
         "content": "개발용으로 쓸 건데 예산은 한정적이에요. 우선순위를 어떻게 두면 좋을까요?",
-        "category": "취미여가",
+        "category": "취미·여가",
         "options": ["CPU 우선", "RAM 우선", "화질·디스플레이 우선"],
         "tags": "노트북,개발",
         "post_kind": "community",

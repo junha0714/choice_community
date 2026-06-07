@@ -145,8 +145,10 @@ type AIFlowResponse = {
   type: "question" | "result";
   step?: number;
   question?: string;
+  suggested_answers?: string[];
   recommended?: string;
   reason?: string;
+  low_confidence?: boolean;
   transcript?: AITranscriptItem[];
 };
 
@@ -291,11 +293,13 @@ function AiRecommendationHero({
   recommended,
   reason,
   aiMode,
+  lowConfidence,
   footer,
 }: {
   recommended: string;
   reason: string | null | undefined;
   aiMode: string | null | undefined;
+  lowConfidence?: boolean;
   footer?: ReactNode;
 }) {
   const summary = firstSummaryFromReason(reason, recommended);
@@ -310,6 +314,11 @@ function AiRecommendationHero({
         <h3 className="mt-1.5 text-lg font-bold leading-snug tracking-tight text-zinc-900 sm:text-xl md:text-2xl dark:text-white">
           {recommended}
         </h3>
+        {lowConfidence ? (
+          <p className="mt-2 text-sm text-amber-800/90 dark:text-amber-200/90">
+            대화가 짧아 확신도가 낮을 수 있어요.
+          </p>
+        ) : null}
         <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-[#b4c4d4]">
           {summary}
         </p>
@@ -411,7 +420,10 @@ function CollapsibleAiLog({
   children: ReactNode;
 }) {
   return (
-    <details className="group rounded-lg border border-zinc-200/90 bg-zinc-50/50 dark:border-[#2a3544] dark:bg-[#151f2a]/90">
+    <details
+      open
+      className="group rounded-lg border border-zinc-200/90 bg-zinc-50/50 dark:border-[#2a3544] dark:bg-[#151f2a]/90"
+    >
       <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-[13px] font-medium text-zinc-800 outline-none transition hover:bg-zinc-100/80 marker:content-none [&::-webkit-details-marker]:hidden dark:text-sky-100 dark:hover:bg-white/5">
         <span className="inline-flex min-w-0 items-center gap-2">
           <span
@@ -434,21 +446,12 @@ function CollapsibleAiLog({
   );
 }
 
-const AI_TRANSCRIPT_PREVIEW = 2;
-
 function AiTranscriptBlock({ items }: { items: AITranscriptItem[] }) {
-  const [showAll, setShowAll] = useState(false);
   if (!items.length) return null;
-  const hasMore = items.length > AI_TRANSCRIPT_PREVIEW;
-  const collapsed = hasMore && !showAll;
-  const visible = collapsed
-    ? items.slice(0, AI_TRANSCRIPT_PREVIEW)
-    : items;
-  const hiddenCount = items.length - AI_TRANSCRIPT_PREVIEW;
 
   return (
     <ol className="mt-0.5 list-none space-y-2 p-0">
-      {visible.map((row) => (
+      {items.map((row) => (
         <li
           key={row.step}
           className="rounded-lg border border-zinc-200/90 bg-white p-2.5 shadow-sm transition-shadow hover:border-zinc-300 hover:shadow dark:border-[#2a3544] dark:bg-[#111922] dark:hover:border-[#3d4d60]"
@@ -458,9 +461,7 @@ function AiTranscriptBlock({ items }: { items: AITranscriptItem[] }) {
               질문 {row.step}
             </span>
           </div>
-          <p
-            className={`mt-1.5 text-[13px] font-medium leading-snug text-zinc-900 dark:text-white ${collapsed ? "line-clamp-2" : ""}`}
-          >
+          <p className="mt-1.5 text-[13px] font-medium leading-snug text-zinc-900 dark:text-white">
             {row.question}
           </p>
           <div className="mt-2 rounded-md border border-sky-100/90 bg-sky-50/45 p-2 dark:border-sky-900/30 dark:bg-sky-950/20">
@@ -468,9 +469,7 @@ function AiTranscriptBlock({ items }: { items: AITranscriptItem[] }) {
               답변
             </span>
             {row.answer != null && String(row.answer).trim() !== "" ? (
-              <p
-                className={`mt-1 text-[13px] leading-relaxed text-zinc-700 dark:text-[#cbd5e1] ${collapsed ? "line-clamp-3" : ""}`}
-              >
+              <p className="mt-1 text-[13px] leading-relaxed text-zinc-700 dark:text-[#cbd5e1]">
                 {row.answer}
               </p>
             ) : (
@@ -481,27 +480,6 @@ function AiTranscriptBlock({ items }: { items: AITranscriptItem[] }) {
           </div>
         </li>
       ))}
-      {hasMore ? (
-        <li className="list-none pt-0.5">
-          {!showAll ? (
-            <button
-              type="button"
-              onClick={() => setShowAll(true)}
-              className="w-full rounded-lg border border-dashed border-zinc-300/90 bg-zinc-50/80 py-2 text-[12px] font-medium text-zinc-700 transition hover:border-sky-300 hover:bg-sky-50/60 hover:text-sky-800 dark:border-[#3d4d60] dark:bg-[#1a2330] dark:text-zinc-300 dark:hover:border-sky-700 dark:hover:bg-sky-950/30 dark:hover:text-sky-200"
-            >
-              나머지 {hiddenCount}턴 더 보기
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setShowAll(false)}
-              className="text-[12px] font-medium text-zinc-500 underline-offset-2 transition hover:text-zinc-800 hover:underline dark:text-zinc-400 dark:hover:text-zinc-200"
-            >
-              대화 접기
-            </button>
-          )}
-        </li>
-      ) : null}
     </ol>
   );
 }
@@ -1559,6 +1537,9 @@ export default function PostDetailPage() {
                 recommended={effectiveAiRecommended}
                 reason={effectiveAiReason}
                 aiMode={post.ai_mode}
+                lowConfidence={
+                  aiState?.type === "result" ? aiState.low_confidence : undefined
+                }
               />
               {(!!(post.ai_recommended ?? "").trim() ||
                 aiState?.type === "result") && (
@@ -1643,42 +1624,45 @@ export default function PostDetailPage() {
                 {aiState.question}
               </p>
 
+              {aiState.suggested_answers && aiState.suggested_answers.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {aiState.suggested_answers.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      onClick={() =>
+                        void handleNextAI({ presetAnswer: suggestion })
+                      }
+                      disabled={aiLoading}
+                      className="rounded-full border border-sky-200 bg-white px-3 py-1.5 text-sm font-medium text-sky-900 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-sky-800/60 dark:bg-sky-950/30 dark:text-sky-100 dark:hover:bg-sky-950/50"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
               {aiTranscript.length > 0 ? (
                 <div className="mt-3 text-[13px] text-zinc-800 dark:text-[#AFC6D8]">
                   <CollapsibleAiLog summary="AI와의 대화 보기">
-                    <ol className="mt-1 list-none space-y-2 p-0">
-                      {aiTranscript.map((t) => (
-                        <li
-                          key={t.step}
-                          className="rounded-lg border border-zinc-200/90 bg-white p-2.5 dark:border-[#2a3544] dark:bg-[#111922]"
-                        >
-                          <p className="line-clamp-2 text-[13px] font-semibold leading-snug text-zinc-900 dark:text-white">
-                            Q{t.step}. {t.question}
-                          </p>
-                          {t.answer ? (
-                            <p className="mt-1 line-clamp-3 text-[13px] leading-relaxed text-zinc-700 dark:text-[#AFC6D8]">
-                              A{t.step}. {t.answer}
-                            </p>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ol>
+                    <AiTranscriptBlock items={aiTranscript} />
                   </CollapsibleAiLog>
                 </div>
               ) : null}
 
               <div className="mt-4 space-y-2.5">
                 <label className="block text-sm font-medium text-zinc-800 dark:text-white">
-                  답변
-                  <textarea
+                  직접 답변
+                  <input
+                    type="text"
                     value={aiAnswer}
                     onChange={(e) => {
                       setAiAnswer(e.target.value);
                       setAiAnswerError(null);
                     }}
+                    placeholder="직접 입력해 주세요"
                     aria-invalid={!!aiAnswerError}
                     className={`mt-1.5 w-full ${fieldInputClass(!!aiAnswerError)}`}
-                    style={{ minHeight: 72 }}
                   />
                 </label>
 

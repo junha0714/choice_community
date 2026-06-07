@@ -35,12 +35,19 @@ function dictToMarkdown(obj: Record<string, unknown>): string {
   return parts.join("\n").trim();
 }
 
+/** 예전 추천 reason 끝에 붙던 고정 문장 제거 */
+function stripLegacyReasonDisclaimer(text: string): string {
+  return text
+    .replace(/\s*대화에서\s*기준이\s*드러나지\s*않아\.?\s*$/u, "")
+    .trim();
+}
+
 export function preprocessAiReasonText(text: string): string {
   const t = text.trim();
   if (!t) return t;
   const sep = /\n-{3,}\n/;
   const chunks = t.split(sep);
-  const head = (chunks[0] ?? "").trim();
+  const head = stripLegacyReasonDisclaimer((chunks[0] ?? "").trim());
   const tail = chunks.slice(1).join("\n---\n").trim();
 
   const tryJson = (block: string): string | null => {
@@ -59,7 +66,7 @@ export function preprocessAiReasonText(text: string): string {
 
   if (!tail) {
     const converted = tryJson(head);
-    return converted ?? t;
+    return converted ?? stripLegacyReasonDisclaimer(t);
   }
   const tailOut = tryJson(tail) ?? tail;
   return `${head}\n\n---\n\n${tailOut}`.trim();

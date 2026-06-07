@@ -278,6 +278,11 @@ export default function EditPostPage() {
           고민 내용
           <textarea
             value={content}
+            spellCheck={false}
+            autoCorrect="off"
+            data-gramm="false"
+            data-gramm_editor="false"
+            data-enable-grammarly="false"
             onChange={(e) => {
               setContent(e.target.value);
               clearFormError("content");

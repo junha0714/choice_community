@@ -365,8 +365,10 @@ class AIQuestionFlowResponse(BaseModel):
     type: str
     step: int | None = None
     question: str | None = None
+    suggested_answers: List[str] | None = None
     recommended: str | None = None
     reason: str | None = None
+    low_confidence: bool | None = None
     transcript: List[AITranscriptItem] | None = None
     draft_post_id: int | None = None
 
@@ -430,7 +432,7 @@ class AISessionStartRequest(BaseModel):
     category: str
     options: List[str]
     ai_mode: str = Field(default="quick", description="quick|deep|friend|random_fun")
-    ai_question_steps: int = Field(default=5, ge=3, le=10)
+    ai_question_steps: int = Field(default=3, ge=3, le=10)
 
     @field_validator("ai_mode", mode="before")
     @classmethod

@@ -20,7 +20,7 @@ import {
   ImageAttachments,
   tryPasteImageFile,
 } from "@/components/ImageAttachments";
-import { AI_MODE_DEFAULT_STEPS, type DefaultAiMode } from "@/lib/user-settings";
+import { AI_MODE_DEFAULT_STEPS } from "@/lib/user-settings";
 import {
   NOTICE_CATEGORY,
   SUGGESTION_CATEGORY,
@@ -44,6 +44,7 @@ type AIFlowQuestion = {
   type: "question";
   step: number;
   question: string;
+  suggested_answers?: string[];
   transcript?: AITranscriptItem[];
 };
 
@@ -51,6 +52,7 @@ type AIFlowResult = {
   type: "result";
   recommended: string;
   reason: string;
+  low_confidence?: boolean;
   transcript?: AITranscriptItem[];
   draft_post_id?: number | null;
 };
@@ -80,7 +82,7 @@ const AI_STYLE_OPTIONS: {
       "지금 당장 정해야 할 때",
       "템포 빠른 대화",
     ],
-    defaultSteps: 4,
+    defaultSteps: 3,
   },
   {
     id: "deep",
@@ -157,7 +159,9 @@ export default function WriteAIPage() {
   const [publishingWithoutAi, setPublishingWithoutAi] = useState(false);
   const [aiMode, setAiMode] = useState<AiConversationStyle>("quick");
   /** AI 질문 라운드 수 (백엔드 3~10) */
-  const [aiQuestionSteps, setAiQuestionSteps] = useState(4);
+  const [aiQuestionSteps, setAiQuestionSteps] = useState(
+    AI_MODE_DEFAULT_STEPS.quick
+  );
   const [tagsText, setTagsText] = useState("");
   const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
   const [tagSuggestLoading, setTagSuggestLoading] = useState(false);
@@ -211,23 +215,6 @@ export default function WriteAIPage() {
       .then((u) => setIsAdmin(!!u?.is_admin))
       .catch(() => setIsAdmin(false))
       .finally(() => setAuthChecked(true));
-  }, []);
-
-  useEffect(() => {
-    const token = getStoredToken();
-    if (!token) return;
-    fetch(`${API_BASE_URL}/auth/me/settings`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: { default_ai_mode?: string } | null) => {
-        const mode = (data?.default_ai_mode ?? "quick") as DefaultAiMode;
-        if (mode === "quick" || mode === "deep" || mode === "friend") {
-          setAiMode(mode);
-          setAiQuestionSteps(AI_MODE_DEFAULT_STEPS[mode]);
-        }
-      })
-      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -588,6 +575,7 @@ export default function WriteAIPage() {
             type: "result",
             recommended: data.recommended ?? "",
             reason: data.reason ?? "",
+            low_confidence: data.low_confidence ?? false,
             transcript: data.transcript ?? [],
             draft_post_id: data.draft_post_id ?? null,
           });
@@ -600,6 +588,7 @@ export default function WriteAIPage() {
             type: "question",
             step: data.step,
             question: data.question,
+            suggested_answers: data.suggested_answers,
             transcript: data.transcript ?? [],
           });
           setAnswerDraft("");
@@ -676,16 +665,20 @@ export default function WriteAIPage() {
     }
   };
 
-  const handleNext = async (action?: "answer" | "skip_question" | "finish_here") => {
+  const handleNext = async (payload?: {
+    action?: "answer" | "skip_question" | "finish_here";
+    presetAnswer?: string;
+  }) => {
     if (!sessionId) return;
+    const action = payload?.action ?? "answer";
     if (action === "finish_here") {
       const ok = window.confirm(
         "남은 질문 없이 지금 추천 결과로 넘어갈까요? (입력한 한 줄이 있으면 함께 전달돼요.)"
       );
       if (!ok) return;
     }
-    const a = answerDraft.trim();
-    if ((!action || action === "answer") && !a) return;
+    const a = (payload?.presetAnswer ?? answerDraft).trim();
+    if (action === "answer" && !a) return;
     setChatLoading(true);
     try {
       const body =
@@ -922,19 +915,35 @@ export default function WriteAIPage() {
             <p className="text-base font-semibold leading-snug text-zinc-900 dark:text-white">
               Q{flow.step}. {flow.question}
             </p>
+            {flow.suggested_answers && flow.suggested_answers.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {flow.suggested_answers.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    onClick={() => void handleNext({ presetAnswer: suggestion })}
+                    disabled={chatLoading}
+                    className="rounded-full border border-sky-200 bg-white px-3 py-1.5 text-sm font-medium text-sky-900 transition hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-sky-800/60 dark:bg-sky-950/30 dark:text-sky-100 dark:hover:bg-sky-950/50"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <label className="block text-sm font-medium text-zinc-800 dark:text-white">
-              답변
-              <textarea
+              직접 답변
+              <input
+                type="text"
                 value={answerDraft}
                 onChange={(e) => setAnswerDraft(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-sky-600 focus:ring-2 focus:ring-sky-300/70 dark:border-[#223141] dark:bg-zinc-950/40 dark:text-white dark:focus:border-sky-400 dark:focus:ring-sky-500/30"
-                style={{ minHeight: 72 }}
+                placeholder="직접 입력해 주세요"
+                className={`mt-1 w-full ${fieldInputClass(false)}`}
               />
             </label>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => void handleNext("answer")}
+                onClick={() => void handleNext({ action: "answer" })}
                 disabled={chatLoading || !answerDraft.trim()}
                 className="rounded-lg bg-sky-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-sky-900/20 hover:bg-sky-600 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-500 dark:hover:bg-sky-400"
               >
@@ -942,7 +951,7 @@ export default function WriteAIPage() {
               </button>
               <button
                 type="button"
-                onClick={() => void handleNext("skip_question")}
+                onClick={() => void handleNext({ action: "skip_question" })}
                 disabled={chatLoading}
                 className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#223141] dark:bg-[#1B2733] dark:text-[#cbd5e1] dark:hover:bg-sky-950/35"
               >
@@ -950,7 +959,7 @@ export default function WriteAIPage() {
               </button>
               <button
                 type="button"
-                onClick={() => void handleNext("finish_here")}
+                onClick={() => void handleNext({ action: "finish_here" })}
                 disabled={chatLoading}
                 className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/60"
               >
@@ -1023,18 +1032,16 @@ export default function WriteAIPage() {
           <h2 className="mt-3 text-xl font-semibold text-zinc-900 dark:text-white">
             추천: {flow.recommended}
           </h2>
+          {flow.low_confidence ? (
+            <p className="mt-2 text-sm text-amber-800/90 dark:text-amber-200/90">
+              대화가 짧아 확신도가 낮을 수 있어요.
+            </p>
+          ) : null}
           <div className="mt-4">
             <AiReasonDisplay text={flow.reason} />
           </div>
 
           <div className="mt-6 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setPhase("chat")}
-              className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-[#223141] dark:bg-[#16202A] dark:text-[#AFC6D8] dark:hover:bg-sky-950/35"
-            >
-              답변 계속 수정
-            </button>
             <button
               type="button"
               onClick={() => void handlePublish()}
@@ -1206,6 +1213,11 @@ export default function WriteAIPage() {
             고민 내용
             <textarea
               value={content}
+              spellCheck={false}
+              autoCorrect="off"
+              data-gramm="false"
+              data-gramm_editor="false"
+              data-enable-grammarly="false"
               onChange={(e) => {
                 setContent(e.target.value);
                 clearFormError("content");

@@ -41,7 +41,7 @@ export const AI_MODE_OPTIONS: {
 ];
 
 export const AI_MODE_DEFAULT_STEPS: Record<DefaultAiMode, number> = {
-  quick: 4,
+  quick: 3,
   deep: 7,
   friend: 5,
 };

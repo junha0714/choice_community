@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -130,12 +131,14 @@ def _ai_result_payload(
     recommended: str,
     reason: str,
     transcript: list[AITranscriptItem],
+    low_confidence: bool = False,
 ) -> dict:
     draft_post_id = _save_ai_session_draft(db, sess, session_id)
     return {
         "type": "result",
         "recommended": recommended,
         "reason": reason,
+        "low_confidence": low_confidence,
         "transcript": transcript,
         "draft_post_id": draft_post_id,
     }
@@ -147,8 +150,8 @@ def _run_standard_ai_final_recommendation(
     *,
     mode_n: str,
     early_finish: bool,
-) -> tuple[str, str]:
-    """random_fun 제외. (recommended, reason 저장 문자열)."""
+) -> tuple[str, str, bool]:
+    """random_fun 제외. (recommended, reason 저장 문자열, low_confidence)."""
     sys_msg, user_msg, forced_rec = ai_final_system_user_for_result(
         post_like, conversation_text, early_finish=early_finish
     )
@@ -164,14 +167,191 @@ def _run_standard_ai_final_recommendation(
     rec = _extract_text(data.get("recommended")).strip()
     if forced_rec and rec != forced_rec:
         rec = forced_rec
+    low_confidence = parse_low_confidence_flag(
+        data.get("low_confidence"), conversation_text=conversation_text
+    )
     if mode_n == "deep":
         reason_short = _extract_text(data.get("reason")).strip()
         comp = _normalize_ai_comparison_field(data.get("comparison")).strip()
         full_reason = (
             f"{reason_short}\n\n---\n\n{comp}".strip() if comp else reason_short
         )
-        return rec, full_reason
-    return rec, _extract_text(data.get("reason")).strip()
+        return rec, sanitize_ai_reason(full_reason), low_confidence
+    return (
+        rec,
+        sanitize_ai_reason(_extract_text(data.get("reason")).strip()),
+        low_confidence,
+    )
+
+
+def _run_random_fun_recommendation(
+    post_like,
+    conversation_text: str | None,
+) -> tuple[str, str]:
+    sys_rf, user_rf, forced_rec = random_fun_result_messages(
+        post_like, conversation_text=conversation_text
+    )
+    response_rf = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": sys_rf},
+            {"role": "user", "content": user_rf},
+        ],
+    )
+    data_rf = _parse_ai_json_response(response_rf.choices[0].message.content)
+    rec = _extract_text(data_rf.get("recommended")).strip()
+    if rec != forced_rec:
+        rec = forced_rec
+    reason = _extract_text(data_rf.get("reason")).strip()
+    return rec, reason
+
+
+def _generate_ai_question(
+    post,
+    *,
+    conversation_text: str,
+    prev_questions: list[str],
+    step: int,
+    max_steps: int,
+    mode: str,
+    last_answer: str | None = None,
+) -> str:
+    sys_msg, user_msg = build_question_prompt(
+        post,
+        conversation_text=conversation_text,
+        prev_questions=prev_questions,
+        step=step,
+        max_steps=max_steps,
+        mode=mode,
+    )
+    last_candidate = ""
+    for attempt in range(QUESTION_GENERATION_MAX_ATTEMPTS):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": sys_msg},
+                    {
+                        "role": "user",
+                        "content": user_msg + question_generation_retry_suffix(attempt),
+                    },
+                ],
+            )
+            data = _parse_ai_json_response(response.choices[0].message.content)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+        q = _extract_question_text(data).strip()
+        if not q:
+            continue
+        last_candidate = q
+        if accept_generated_question(
+            q, post, prev_questions, last_answer, step=step
+        ):
+            return q
+    fallback = resolve_question_generation_fallback(last_candidate)
+    if fallback:
+        return fallback
+    raise HTTPException(
+        status_code=503,
+        detail="질문을 만들지 못했어요. 잠시 후 다시 시도해 주세요.",
+    )
+
+
+def _generate_answer_suggestions(
+    post,
+    *,
+    question: str,
+    conversation_text: str,
+    mode: str,
+) -> list[str]:
+    q = (question or "").strip()
+    if not q:
+        return []
+    collected: list[str] = []
+    for attempt in range(SUGGESTED_ANSWER_GENERATION_MAX_ATTEMPTS):
+        try:
+            sys_msg, user_msg = build_answer_suggestions_prompt(
+                post,
+                question=q,
+                conversation_text=conversation_text,
+                mode=mode,
+            )
+            suffix = suggested_answer_retry_suffix(attempt, collected)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": sys_msg},
+                    {"role": "user", "content": user_msg + suffix},
+                ],
+            )
+            data = _parse_ai_json_response(response.choices[0].message.content)
+            collected = normalize_suggested_answers(
+                data.get("suggested_answers"),
+                post,
+                existing=collected,
+            )
+            if len(collected) >= SUGGESTED_ANSWER_COUNT:
+                break
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+    return complete_suggested_answers(collected, post, mode=mode)
+
+
+def _question_flow_payload(
+    *,
+    step: int,
+    question: str,
+    transcript: list[AITranscriptItem],
+    suggested_answers: list[str] | None = None,
+    **extra,
+) -> dict:
+    payload = {
+        "type": "question",
+        "step": step,
+        "question": question,
+        "transcript": transcript,
+        **extra,
+    }
+    if suggested_answers:
+        payload["suggested_answers"] = suggested_answers
+    return payload
+
+
+def _resolve_after_answer(
+    post,
+    *,
+    conversation_text: str,
+    prev_questions: list[str],
+    current_step: int,
+    max_steps: int,
+    mode: str,
+    last_answer: str | None,
+    force_finish: bool,
+) -> tuple[bool, bool, str | None, list[str]]:
+    """
+    답변 후 다음 액션.
+    추천은 설정 질문 수 도달 또는 '바로 추천' 버튼(finish_here)일 때만.
+    Returns: (should_recommend, early_finish, next_question, suggested_answers)
+    """
+    if current_step >= max_steps or force_finish:
+        return True, bool(force_finish and current_step < max_steps), None, []
+
+    next_q = _generate_ai_question(
+        post,
+        conversation_text=conversation_text,
+        prev_questions=prev_questions,
+        step=current_step + 1,
+        max_steps=max_steps,
+        mode=mode,
+        last_answer=last_answer,
+    )
+    suggestions = _generate_answer_suggestions(
+        post,
+        question=next_q,
+        conversation_text=conversation_text,
+        mode=mode,
+    )
+    return False, False, next_q, suggestions
 
 
 @router.get("/posts/{post_id}/ai-transcript", response_model=list[AITranscriptItem])
@@ -249,23 +429,11 @@ def ai_session_start(
         mode_n = normalize_ai_mode(getattr(post_like, "ai_mode", None))
         if mode_n == "random_fun":
             try:
-                sys_rf, user_rf, forced_rec = random_fun_result_messages(
+                rec_out, reason_rf = _run_random_fun_recommendation(
                     post_like, conversation_text=None
                 )
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
-            response_rf = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": sys_rf},
-                    {"role": "user", "content": user_rf},
-                ],
-            )
-            data_rf = _parse_ai_json_response(response_rf.choices[0].message.content)
-            rec_out = _extract_text(data_rf.get("recommended")).strip()
-            if rec_out != forced_rec:
-                rec_out = forced_rec
-            reason_rf = _extract_text(data_rf.get("reason")).strip()
             sess.ai_recommended = rec_out
             sess.ai_reason = reason_rf
             db.commit()
@@ -281,86 +449,14 @@ def ai_session_start(
             return {"session_id": sess.id, "step": None, **result}
 
         mx = _ai_max_question_steps(post_like)
-        sys_first = _ai_system_prompt_question(
-            followup=False, conversation_style=mode_n, max_question_rounds=mx
-        )
-        stage0 = classify_decision_stage("", None, 0)
-        intent0 = select_question_intent(
-            stage=stage0, next_step=1, max_rounds=mx, prev_questions=[]
-        )
-        user_first = (
-            _ai_user_block_post(post_like)
-            + "첫 질문 1개를 만들어라."
-            + _decision_stage_user_suffix(stage0)
-            + _question_intent_user_suffix(intent0)
-            + _first_question_human_opening_suffix(post_like)
-            + _anti_binary_redundant_user_suffix(post_like)
-            + _anti_obvious_restate_user_suffix(post_like)
-            + _ai_no_tournament_user_suffix(
-                post_like, [], next_step=1, max_rounds=mx
-            )
-            + _ai_thin_context_user_suffix(post_like)
-            + _ai_question_context_suffix([])
-            + _ai_mode_question_user_suffix(
-                mode=mode_n, step=1, max_rounds=mx, post=post_like
-            )
-        )
-
-        question_text = ""
-        sys_loop = sys_first
-        for _attempt in range(4):
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": sys_loop},
-                    {"role": "user", "content": user_first},
-                ],
-            )
-            data = _parse_ai_json_response(response.choices[0].message.content)
-            question_text = _extract_question_text(data).strip()
-            if not question_should_reject(
-                question_text,
-                post_like,
-                [],
-                None,
-                is_first_question=True,
-                next_step=1,
-                max_rounds=mx,
-            ):
-                break
-            _, pen = question_rejection_penalties(
-                question_text,
-                post_like,
-                [],
-                None,
-                is_first_question=True,
-                next_step=1,
-                max_rounds=mx,
-            )
-            retry_hint = ""
-            if pen.get("narrow_pairwise_subset"):
-                retry_hint = (
-                    " 선택지가 3개 이상인데 두 후보만 맞댔다. "
-                    "전체 후보를 염두에 둔 질문(기준·제외·남은 후보들 중)으로 바꿔라. "
-                    "글에 없는 특정 상황(여행·맛집 등)을 붙이지 마라."
-                )
-            sys_loop = (
-                sys_first
-                + " 질문 품질 점검에서 감점이 컸다. "
-                f"감점 항목: {list(pen.keys())}. "
-                f"[질문 의도: {intent0.value}]는 유지하고, 그 의도에 맞게 한 문장만 다시 써라."
-                + retry_hint
-            )
-        if question_should_reject(
-            question_text,
+        question_text = _generate_ai_question(
             post_like,
-            [],
-            None,
-            is_first_question=True,
-            next_step=1,
-            max_rounds=mx,
-        ):
-            question_text = _smart_fallback_question(post_like, [], intent=intent0)
+            conversation_text="",
+            prev_questions=[],
+            step=1,
+            max_steps=mx,
+            mode=mode_n,
+        )
 
         interaction = AISessionInteraction(
             session_id=sess.id,
@@ -372,12 +468,20 @@ def ai_session_start(
         db.commit()
 
         tr = _load_ai_session_transcript(db, sess.id)
+        suggestions = _generate_answer_suggestions(
+            post_like,
+            question=question_text,
+            conversation_text="",
+            mode=mode_n,
+        )
         return {
             "session_id": sess.id,
-            "type": "question",
-            "step": 1,
-            "question": question_text,
-            "transcript": tr,
+            **_question_flow_payload(
+                step=1,
+                question=question_text,
+                transcript=tr,
+                suggested_answers=suggestions,
+            ),
         }
     except Exception as e:
         print("=== ai_session_start error ===")
@@ -417,30 +521,30 @@ def ai_session_next(
     max_steps = _ai_max_question_steps(post_like)
     mode_n = normalize_ai_mode(getattr(post_like, "ai_mode", None))
     force_finish = req.action == "finish_here"
-    early_finish = bool(force_finish and current_step < max_steps)
+    prev_qs = [it.question for it in interactions if it.question]
 
     try:
-        if current_step >= max_steps or force_finish:
+        should_recommend, early_finish, next_question, suggested_answers = _resolve_after_answer(
+            post_like,
+            conversation_text=conversation_text,
+            prev_questions=prev_qs,
+            current_step=current_step,
+            max_steps=max_steps,
+            mode=mode_n,
+            last_answer=last_interaction.answer,
+            force_finish=force_finish,
+        )
+
+        if should_recommend:
+            low_confidence = False
             if mode_n == "random_fun":
-                sys_rf, user_rf, forced_rec = random_fun_result_messages(
+                rec, reason_rf = _run_random_fun_recommendation(
                     post_like, conversation_text=conversation_text
                 )
-                response_rf = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": sys_rf},
-                        {"role": "user", "content": user_rf},
-                    ],
-                )
-                data_rf = _parse_ai_json_response(response_rf.choices[0].message.content)
-                rec = _extract_text(data_rf.get("recommended")).strip()
-                if rec != forced_rec:
-                    rec = forced_rec
-                reason_rf = _extract_text(data_rf.get("reason")).strip()
                 sess.ai_recommended = rec
                 sess.ai_reason = reason_rf
             else:
-                rec, reason_out = _run_standard_ai_final_recommendation(
+                rec, reason_out, low_confidence = _run_standard_ai_final_recommendation(
                     post_like,
                     conversation_text,
                     mode_n=mode_n,
@@ -458,144 +562,26 @@ def ai_session_next(
                 recommended=rec,
                 reason=sess.ai_reason or "",
                 transcript=tr_final,
+                low_confidence=low_confidence,
             )
 
-        # 다음 질문 생성
         next_step = current_step + 1
-        prev_questions = [it.question for it in interactions if it.question]
-        last_answer = interactions[-1].answer if interactions else None
-        stage = classify_decision_stage(conversation_text, last_answer, len(prev_questions))
-        q_intent = select_question_intent(
-            stage=stage,
-            next_step=next_step,
-            max_rounds=max_steps,
-            prev_questions=prev_questions,
-            last_answer=last_answer,
-        )
-
-        sys_next = _ai_system_prompt_question(
-            followup=True, conversation_style=mode_n, max_question_rounds=max_steps
-        ) + _next_ai_sys_suffix_binary(post_like)
-        user_next = (
-            _ai_user_block_post(post_like)
-            + f"지금까지 질문/답변:\n{conversation_text}\n"
-            + "다음 질문 1개를 만들어라."
-            + _decision_stage_user_suffix(stage)
-            + _question_intent_user_suffix(q_intent)
-            + _stall_guard_user_suffix(prev_questions, last_answer)
-            + _next_ai_user_suffix_binary(post_like)
-            + _anti_obvious_restate_user_suffix(post_like)
-            + _answer_consistency_user_suffix(conversation_text)
-            + _ai_no_tournament_user_suffix(
-                post_like,
-                prev_questions,
-                next_step=next_step,
-                max_rounds=max_steps,
-            )
-            + _skip_answer_pivot_suffix(post_like, prev_questions, last_answer)
-            + _ai_question_style_rotation_suffix(prev_questions)
-            + _ai_thin_context_user_suffix(post_like)
-            + _ai_question_context_suffix(prev_questions)
-            + _ai_mode_question_user_suffix(
-                mode=mode_n,
-                step=next_step,
-                max_rounds=max_steps,
-                post=post_like,
-            )
-        )
-
-        sys_base = sys_next
-        user_base = user_next
-        chosen: str | None = None
-        for attempt in range(5):
-            extra = ""
-            if attempt > 0:
-                extra = (
-                    "이전에 쓴 질문과 겹치지 않게, 방금 답을 그대로 되묻지 말고 새 질문 1개. "
-                    "[질문 의도]는 그대로 두고 문장만 고쳐라."
-                )
-                if _should_avoid_named_option_comparison(prev_questions, post_like):
-                    extra += (
-                        " 최근에 두 후보를 한 문장에 나란히 맞댄 형식이 잦았다. "
-                        "이번에는 한 후보·한 축·또는 [질문 의도]에 맞는 다른 형식으로 바꿔라."
-                    )
-                if _any_recent_theme_saturated(prev_questions):
-                    extra += " 같은 말과 비슷한 단어만 반복하지 말고, 한 단계 다른 각도를 시도해라."
-                if _post_is_thin_context_post(post_like):
-                    extra += (
-                        " 본문이 매우 짧다. 모호한 감상만 잇달아 묻지 말고, "
-                        "짧게 답할 수 있는 한 가지(기준·조건·빈도 등)로 물어라."
-                    )
-                if _answer_is_low_information(last_answer):
-                    extra += (
-                        " 사용자가 짧거나 ‘모르겠다’에 가깝게 답했다. "
-                        "구체적인 한 축으로 좁히거나, 한두 단어로라도 답하기 쉬운 질문으로 바꿔라."
-                    )
-                if _answer_is_skip(last_answer):
-                    extra += (
-                        " 사용자가 질문을 넘겼다. 다른 각도로, "
-                        "선택지가 3개 이상이면 두 후보만 맞대지 말고 전체 후보에 연결되게."
-                    )
-                if _recent_stressful_counterfactual_pick_count(prev_questions) >= 1:
-                    extra += (
-                        " 이미 극단 가정으로 ‘포기·안 고름’을 묻는 질문을 썼다. 같은 류는 피하고 수렴·정리 쪽으로."
-                    )
-            if attempt >= 2 and len(post_option_list(post_like)) == 2:
-                extra += " 설문 틀보다 대화처럼 자연스럽게."
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": sys_base + extra},
-                    {"role": "user", "content": user_base},
-                ],
-            )
-            data = _parse_ai_json_response(response.choices[0].message.content)
-            q_text = _extract_question_text(data).strip()
-            if not q_text:
-                continue
-            if not question_should_reject(
-                q_text,
-                post_like,
-                prev_questions,
-                last_answer,
-                next_step=next_step,
-                max_rounds=max_steps,
-            ):
-                chosen = q_text
-                break
-            _, pen = question_rejection_penalties(
-                q_text,
-                post_like,
-                prev_questions,
-                last_answer,
-                next_step=next_step,
-                max_rounds=max_steps,
-            )
-            if pen.get("narrow_pairwise_subset"):
-                extra += (
-                    " 선택지가 3개 이상인데 두 후보만 맞댔다. "
-                    "전체 후보를 염두에 둔 질문으로 바꿔라."
-                )
-
-        if not chosen:
-            chosen = _smart_fallback_question(post_like, prev_questions, intent=q_intent)
-
         new_interaction = AISessionInteraction(
             session_id=session_id,
             step_number=next_step,
-            question=chosen,
+            question=next_question,
             answer=None,
         )
         db.add(new_interaction)
         db.commit()
 
         tr = _load_ai_session_transcript(db, session_id)
-        return {
-            "type": "question",
-            "step": next_step,
-            "question": chosen,
-            "transcript": tr,
-        }
+        return _question_flow_payload(
+            step=next_step,
+            question=new_interaction.question,
+            transcript=tr,
+            suggested_answers=suggested_answers,
+        )
 
     except Exception as e:
         print("=== ai_session_next error ===")
@@ -667,21 +653,9 @@ def start_ai(
     try:
         mode_n = normalize_ai_mode(getattr(post, "ai_mode", None))
         if mode_n == "random_fun":
-            sys_rf, user_rf, forced_rec = random_fun_result_messages(
+            rec_out, reason_rf = _run_random_fun_recommendation(
                 post, conversation_text=None
             )
-            response_rf = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": sys_rf},
-                    {"role": "user", "content": user_rf},
-                ],
-            )
-            data_rf = _parse_ai_json_response(response_rf.choices[0].message.content)
-            rec_out = _extract_text(data_rf.get("recommended")).strip()
-            if rec_out != forced_rec:
-                rec_out = forced_rec
-            reason_rf = _extract_text(data_rf.get("reason")).strip()
             post.ai_recommended = rec_out
             post.ai_reason = reason_rf
             db.commit()
@@ -695,85 +669,14 @@ def start_ai(
             }
 
         mx = _ai_max_question_steps(post)
-        sys_first = _ai_system_prompt_question(
-            followup=False, conversation_style=mode_n, max_question_rounds=mx
-        )
-        stage0 = classify_decision_stage("", None, 0)
-        intent0 = select_question_intent(
-            stage=stage0, next_step=1, max_rounds=mx, prev_questions=[]
-        )
-        user_first = (
-            _ai_user_block_post(post)
-            + "첫 질문 1개를 만들어라."
-            + _decision_stage_user_suffix(stage0)
-            + _question_intent_user_suffix(intent0)
-            + _first_question_human_opening_suffix(post)
-            + _anti_binary_redundant_user_suffix(post)
-            + _anti_obvious_restate_user_suffix(post)
-            + _ai_no_tournament_user_suffix(post, [], next_step=1, max_rounds=mx)
-            + _ai_thin_context_user_suffix(post)
-            + _ai_question_context_suffix([])
-            + _ai_mode_question_user_suffix(
-                mode=mode_n, step=1, max_rounds=mx, post=post
-            )
-        )
-
-        question_text = ""
-        sys_loop = sys_first
-        for _attempt in range(4):
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": sys_loop},
-                    {"role": "user", "content": user_first},
-                ],
-            )
-            data = _parse_ai_json_response(response.choices[0].message.content)
-            question_text = _extract_question_text(data).strip()
-            if not question_should_reject(
-                question_text,
-                post,
-                [],
-                None,
-                is_first_question=True,
-                next_step=1,
-                max_rounds=mx,
-            ):
-                break
-            _, pen = question_rejection_penalties(
-                question_text,
-                post,
-                [],
-                None,
-                is_first_question=True,
-                next_step=1,
-                max_rounds=mx,
-            )
-            retry_hint = ""
-            if pen.get("narrow_pairwise_subset"):
-                retry_hint = (
-                    " 선택지가 3개 이상인데 두 후보만 맞댔다. "
-                    "전체 후보를 염두에 둔 질문으로 바꿔라. "
-                    "글에 없는 특정 상황을 붙이지 마라."
-                )
-            sys_loop = (
-                sys_first
-                + " 질문 품질 점검에서 감점이 컸다(반복·단순 취향 재확인·장황함 등). "
-                f"감점 항목: {list(pen.keys())}. "
-                f"[질문 의도: {intent0.value}]는 유지하고, 그 의도에 맞게 한 문장만 다시 써라."
-                + retry_hint
-            )
-
-        if question_should_reject(
-            question_text,
+        question_text = _generate_ai_question(
             post,
-            [],
-            None,
-            is_first_question=True,
-            next_step=1,
-            max_rounds=mx,
-        ):
-            question_text = _smart_fallback_question(post, [], intent=intent0)
+            conversation_text="",
+            prev_questions=[],
+            step=1,
+            max_steps=mx,
+            mode=mode_n,
+        )
 
         interaction = AIInteraction(
             post_id=post_id,
@@ -786,12 +689,18 @@ def start_ai(
         db.commit()
 
         tr = _load_ai_transcript(db, post_id)
-        return {
-            "type": "question",
-            "step": 1,
-            "question": question_text,
-            "transcript": tr,
-        }
+        suggestions = _generate_answer_suggestions(
+            post,
+            question=question_text,
+            conversation_text="",
+            mode=mode_n,
+        )
+        return _question_flow_payload(
+            step=1,
+            question=question_text,
+            transcript=tr,
+            suggested_answers=suggestions,
+        )
 
     except Exception as e:
         print("=== start_ai error ===")
@@ -836,29 +745,30 @@ def next_ai(
     max_steps = _ai_max_question_steps(post)
     mode_n = normalize_ai_mode(getattr(post, "ai_mode", None))
     force_finish = req.action == "finish_here"
-    early_finish = bool(force_finish and current_step < max_steps)
+    prev_qs = [it.question for it in interactions if it.question]
 
     try:
-        if current_step >= max_steps or force_finish:
+        should_recommend, early_finish, next_question, suggested_answers = _resolve_after_answer(
+            post,
+            conversation_text=conversation_text,
+            prev_questions=prev_qs,
+            current_step=current_step,
+            max_steps=max_steps,
+            mode=mode_n,
+            last_answer=last_interaction.answer,
+            force_finish=force_finish,
+        )
+
+        if should_recommend:
+            low_confidence = False
             if mode_n == "random_fun":
-                sys_rf, user_rf, forced_rec = random_fun_result_messages(
+                rec, reason_rf = _run_random_fun_recommendation(
                     post, conversation_text=conversation_text
                 )
-                response_rf = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": sys_rf},
-                        {"role": "user", "content": user_rf},
-                    ],
-                )
-                data_rf = _parse_ai_json_response(response_rf.choices[0].message.content)
-                rec = _extract_text(data_rf.get("recommended")).strip()
-                if rec != forced_rec:
-                    rec = forced_rec
                 post.ai_recommended = rec
-                post.ai_reason = _extract_text(data_rf.get("reason")).strip()
+                post.ai_reason = reason_rf
             else:
-                rec, reason_out = _run_standard_ai_final_recommendation(
+                rec, reason_out, low_confidence = _run_standard_ai_final_recommendation(
                     post,
                     conversation_text,
                     mode_n=mode_n,
@@ -873,130 +783,11 @@ def next_ai(
                 "type": "result",
                 "recommended": post.ai_recommended,
                 "reason": post.ai_reason or "",
+                "low_confidence": low_confidence,
                 "transcript": tr_final,
             }
 
         next_step = current_step + 1
-        prev_questions = [it.question for it in interactions if it.question]
-        last_answer = interactions[-1].answer if interactions else None
-        stage = classify_decision_stage(conversation_text, last_answer, len(prev_questions))
-        q_intent = select_question_intent(
-            stage=stage,
-            next_step=next_step,
-            max_rounds=max_steps,
-            prev_questions=prev_questions,
-            last_answer=last_answer,
-        )
-
-        sys_next = _ai_system_prompt_question(
-            followup=True, conversation_style=mode_n, max_question_rounds=max_steps
-        ) + _next_ai_sys_suffix_binary(post)
-        user_next = (
-            _ai_user_block_post(post)
-            + f"지금까지 질문/답변:\n{conversation_text}\n"
-            + "다음 질문 1개를 만들어라."
-            + _decision_stage_user_suffix(stage)
-            + _question_intent_user_suffix(q_intent)
-            + _stall_guard_user_suffix(prev_questions, last_answer)
-            + _next_ai_user_suffix_binary(post)
-            + _anti_obvious_restate_user_suffix(post)
-            + _answer_consistency_user_suffix(conversation_text)
-            + _ai_no_tournament_user_suffix(
-                post,
-                prev_questions,
-                next_step=next_step,
-                max_rounds=max_steps,
-            )
-            + _skip_answer_pivot_suffix(post, prev_questions, last_answer)
-            + _ai_question_style_rotation_suffix(prev_questions)
-            + _ai_thin_context_user_suffix(post)
-            + _ai_question_context_suffix(prev_questions)
-            + _ai_mode_question_user_suffix(
-                mode=mode_n,
-                step=next_step,
-                max_rounds=max_steps,
-                post=post,
-            )
-        )
-
-        sys_base = sys_next
-        user_base = user_next
-        chosen: str | None = None
-        for attempt in range(5):
-            extra = ""
-            if attempt > 0:
-                extra = (
-                    "이전에 쓴 질문과 겹치지 않게, 방금 답을 그대로 되묻지 말고 새 질문 1개. "
-                    "[질문 의도]는 그대로 두고 문장만 고쳐라."
-                )
-                if _should_avoid_named_option_comparison(prev_questions, post):
-                    extra += (
-                        " 최근에 두 후보를 한 문장에 나란히 맞댄 형식이 잦았다. "
-                        "이번에는 한 후보·한 축·또는 [질문 의도]에 맞는 다른 형식으로 바꿔라."
-                    )
-                if _any_recent_theme_saturated(prev_questions):
-                    extra += " 같은 말과 비슷한 단어만 반복하지 말고, 한 단계 다른 각도를 시도해라."
-                if _post_is_thin_context_post(post):
-                    extra += (
-                        " 본문이 매우 짧다. 모호한 감상만 잇달아 묻지 말고, "
-                        "짧게 답할 수 있는 한 가지(기준·조건·빈도 등)로 물어라."
-                    )
-                if _answer_is_low_information(last_answer):
-                    extra += (
-                        " 사용자가 짧거나 ‘모르겠다’에 가깝게 답했다. "
-                        "구체적인 한 축으로 좁히거나, 한두 단어로라도 답하기 쉬운 질문으로 바꿔라."
-                    )
-                if _answer_is_skip(last_answer):
-                    extra += (
-                        " 사용자가 질문을 넘겼다. 다른 각도로, "
-                        "선택지가 3개 이상이면 두 후보만 맞대지 말고 전체 후보에 연결되게."
-                    )
-                if _recent_stressful_counterfactual_pick_count(prev_questions) >= 1:
-                    extra += (
-                        " 이미 극단 가정으로 ‘포기·안 고름’을 묻는 질문을 썼다. 같은 류는 피하고 수렴·정리 쪽으로."
-                    )
-            if attempt >= 2 and len(post_option_list(post)) == 2:
-                extra += " 설문 틀보다 대화처럼 자연스럽게."
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": sys_base + extra},
-                    {"role": "user", "content": user_base},
-                ],
-            )
-
-            data = _parse_ai_json_response(response.choices[0].message.content)
-            cq = _extract_question_text(data).strip()
-            if not question_should_reject(
-                cq,
-                post,
-                prev_questions,
-                last_answer,
-                next_step=next_step,
-                max_rounds=max_steps,
-            ):
-                chosen = cq
-                break
-            _, pen = question_rejection_penalties(
-                cq,
-                post,
-                prev_questions,
-                last_answer,
-                next_step=next_step,
-                max_rounds=max_steps,
-            )
-            if pen.get("narrow_pairwise_subset"):
-                extra += (
-                    " 선택지가 3개 이상인데 두 후보만 맞댔다. "
-                    "전체 후보를 염두에 둔 질문으로 바꿔라."
-                )
-
-        next_question = (
-            chosen
-            if chosen
-            else _smart_fallback_question(post, prev_questions, intent=q_intent)
-        )
-
         interaction = AIInteraction(
             post_id=post_id,
             step_number=next_step,
@@ -1008,12 +799,12 @@ def next_ai(
         db.commit()
 
         tr = _load_ai_transcript(db, post_id)
-        return {
-            "type": "question",
-            "step": next_step,
-            "question": next_question,
-            "transcript": tr,
-        }
+        return _question_flow_payload(
+            step=next_step,
+            question=interaction.question,
+            transcript=tr,
+            suggested_answers=suggested_answers,
+        )
 
     except Exception as e:
         print("=== next_ai error ===")
